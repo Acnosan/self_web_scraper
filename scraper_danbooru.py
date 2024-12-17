@@ -23,46 +23,37 @@ class DanbooruScraper:
         
     def setup_driver(self):
         options = webdriver.ChromeOptions()
-        options.add_argument("--headless")  # Uncomment to hide browser
+        #options.add_argument("--headless")  # Uncomment to hide browser
         options.add_argument("--window-size=1920,1080")
         self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
-    def extract_image_urls(self, page, retries=3):
+    def extract_image_urls(self, page):
         image_urls = set()
-        try:
-            # Ensure that the page content is fully loaded
-            WebDriverWait(self.driver, 15).until(  # Increased the timeout to 15 seconds
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".post-preview"))
-            )
+        WebDriverWait(self.driver, 10).until(
+            EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".post-preview"))
+        )
 
-            # Find all post preview elements on the page
-            posts = self.driver.find_elements(By.CSS_SELECTOR, ".post-preview")
-            print(f"Found {len(posts)} posts on page {page}")
-
-            for post in posts:
-                try:
-                    post_id = post.get_attribute('data-id')
-                    if post_id:
-                        post_url = f"{self.base_url}/posts/{post_id}"
-                        # Get the full image URL for this post
-                        img_url = self.get_full_image_url(post_url)
-                        if img_url:  # Ensure the URL is valid
-                            image_urls.add(img_url)
-                            print(f"Url Extracted Successfully: {img_url}")
-                except StaleElementReferenceException:
-                    print(f"Stale element encountered on post {post}. Retrying...")
-                    return self.extract_image_urls(page, retries=retries)  # Retry the extraction
-
-        except TimeoutException:
-            print(f"Timeout waiting for posts on page {page}. Retrying... {retries} retries left.")
-            if retries > 0:
-                return self.extract_image_urls(page, retries=retries - 1)  # Retry the extraction
-            else:
-                print(f"Max retries reached for page {page}. Moving to next page.")
+        # First collect all post IDs
+        posts = self.driver.find_elements(By.CSS_SELECTOR, ".post-preview")
+        print(f"Found {len(posts)} posts on page {page}")
         
-        except Exception as e:
-            print(f"Error processing page {page}: {e}")
-        
+        post_ids = []
+        for post in posts:
+            try:
+                post_id = post.get_attribute('data-id')
+                if post_id:
+                    post_ids.append(post_id)
+            except StaleElementReferenceException:
+                continue
+
+        # Then visit each post page separately
+        for post_id in post_ids:
+            post_url = f"{self.base_url}/posts/{post_id}"
+            img_url = self.get_full_image_url(post_url)
+            if img_url:
+                image_urls.add(img_url)
+                print(f"Url Extracted Successfully: {img_url}")
+
         return image_urls
 
     
@@ -100,9 +91,6 @@ class DanbooruScraper:
         file_path = os.path.join(self.output_folder, img_name)
         
         try:
-            #self.driver.get(image_url)
-            #time.sleep(2)  # Wait for the image to load
-            
             img_data = requests.get(image_url).content
             with open(file_path, 'wb') as file:
                 file.write(img_data)
@@ -160,7 +148,7 @@ if __name__ == "__main__":
     # Configuration
     tags = "acheron_(honkai:_star_rail)"  # Use underscores instead of spaces
     output_folder = os.path.join("danbooru_images", "acheron")
-    max_images = 20  # Adjust this number as needed
+    max_images = 12  # Adjust this number as needed
     
     # Create and run scraper
     scraper = DanbooruScraper(
