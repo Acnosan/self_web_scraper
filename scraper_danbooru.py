@@ -2,7 +2,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException,StaleElementReferenceException
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
 
@@ -23,34 +23,48 @@ class DanbooruScraper:
         
     def setup_driver(self):
         options = webdriver.ChromeOptions()
-        # options.add_argument("--headless")  # Uncomment to hide browser
+        options.add_argument("--headless")  # Uncomment to hide browser
         options.add_argument("--window-size=1920,1080")
         self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
-    def extract_image_urls(self, page):
+    def extract_image_urls(self, page, retries=3):
         image_urls = set()
         try:
             # Ensure that the page content is fully loaded
-            WebDriverWait(self.driver, 5).until(
+            WebDriverWait(self.driver, 15).until(  # Increased the timeout to 15 seconds
                 EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".post-preview"))
             )
-            
+
             # Find all post preview elements on the page
             posts = self.driver.find_elements(By.CSS_SELECTOR, ".post-preview")
             print(f"Found {len(posts)} posts on page {page}")
+
             for post in posts:
                 try:
                     post_id = post.get_attribute('data-id')
                     if post_id:
                         post_url = f"{self.base_url}/posts/{post_id}"
+                        # Get the full image URL for this post
                         img_url = self.get_full_image_url(post_url)
-                        image_urls.add(img_url)
-                        print(f"Url Extracted Successfully : {post}")
-                except Exception as e:
-                    
-                    return image_urls
+                        if img_url:  # Ensure the URL is valid
+                            image_urls.add(img_url)
+                            print(f"Url Extracted Successfully: {img_url}")
+                except StaleElementReferenceException:
+                    print(f"Stale element encountered on post {post}. Retrying...")
+                    return self.extract_image_urls(page, retries=retries)  # Retry the extraction
+
         except TimeoutException:
-            return f"Timeout waiting for posts on page {page}"
+            print(f"Timeout waiting for posts on page {page}. Retrying... {retries} retries left.")
+            if retries > 0:
+                return self.extract_image_urls(page, retries=retries - 1)  # Retry the extraction
+            else:
+                print(f"Max retries reached for page {page}. Moving to next page.")
+        
+        except Exception as e:
+            print(f"Error processing page {page}: {e}")
+        
+        return image_urls
+
     
     def get_full_image_url(self, post_url):
         try:
@@ -61,7 +75,8 @@ class DanbooruScraper:
                 EC.presence_of_element_located((By.TAG_NAME, "img"))
             )
             # Wait a bit longer to ensure images are loaded
-            time.sleep(2)
+            time.sleep(3)
+            
             # Try targeting the post image more specifically (change the class as needed)
             img_elements = self.driver.find_elements(By.CSS_SELECTOR, "img.fit-width")
 
@@ -77,6 +92,7 @@ class DanbooruScraper:
         except Exception as e:
             print(f"Error getting full image URL: {e}")
             return None
+
         
     def download_image(self, args):
         idx, image_url = args
@@ -84,8 +100,8 @@ class DanbooruScraper:
         file_path = os.path.join(self.output_folder, img_name)
         
         try:
-            self.driver.get(image_url)
-            time.sleep(2)  # Wait for the image to load
+            #self.driver.get(image_url)
+            #time.sleep(2)  # Wait for the image to load
             
             img_data = requests.get(image_url).content
             with open(file_path, 'wb') as file:
@@ -116,13 +132,15 @@ class DanbooruScraper:
                     print("No more images found on this page")
                     break
                 image_urls.update(new_urls)
+                if len(image_urls) >= self.max_images:
+                    break
                 page += 1
                 
                 # Check if we've reached the last page
                 if "No posts found" in self.driver.page_source:
                     print("Reached the end of search results")
                     break
-            
+                
             # Convert to list and limit to max_images
             final_urls = list(image_urls)[:self.max_images]
             print(f"\nFound {len(final_urls)} unique posts. Starting download...")
