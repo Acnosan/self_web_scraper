@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import requests
 import concurrent.futures
@@ -15,14 +16,13 @@ from queue import Queue
 from threading import Lock
 
 class DanbooruScraper:
-    def __init__(self, tags, output_folder, max_images ,page_number):
+    def __init__(self, tags, output_folder, max_images ,page_number, download_idx):
         self.base_url = "https://danbooru.donmai.us"
         self.tags = quote(tags.replace(' ', '_'))
         self.output_folder = output_folder
         self.max_images = max_images
         self.page_number = page_number
-        self.image_urls = set()
-        #self.url_lock = Lock()
+        self.download_idx = download_idx
         self.drivers = Queue()
         
     def create_driver(self):
@@ -59,12 +59,13 @@ class DanbooruScraper:
             
         finally:
             driver.quit()
-            print(f"Found {len(post_urls)} posts on page (limited by max_images left ={self.max_images-len(self.image_urls)})")
+            print(f"Found {len(post_urls)} posts on page (limited by max_images, left {self.max_images})")
             return post_urls
 
     def get_image_url(self, post_url):
         """Get image URL from a single post using a driver from the pool."""
         driver = self.create_driver()
+        image_urls = set()
         try:
             driver.get(f"{self.base_url}/posts/{post_url}")
             
@@ -74,71 +75,77 @@ class DanbooruScraper:
             img_element = driver.find_element(By.CSS_SELECTOR, "img.fit-width")
             img_url = img_element.get_attribute('src')
             if img_url:
-                self.image_urls.add(img_url)
+                image_urls.add(img_url)
             
         except Exception as e:
             print(f"Error processing post {post_url}: {e}")
             
         finally:
             driver.quit()
+            return image_urls
 
     def download_image(self, args):
         idx, image_url = args
-        img_name = str(self.tags)+str(idx+1)+".jpg"
+        img_name = str(self.tags)+"_idx_"+str(idx+1)+".jpg"
         file_path = os.path.join(self.output_folder, img_name)
         
         try:
             img_data = requests.get(image_url).content
             with open(file_path, 'wb') as file:
                 file.write(img_data)
+                print(f'image {img_name} downloaded')
             return
         except Exception as e:
             print(f"Error: {e}")
             
     def process_page_posts(self, post_urls):
         """Process all posts from a page concurrently."""
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             print("starting the executor for processing images scr from urls")
-            executor.map(self.get_image_url, post_urls)
-
+            results = executor.map(self.get_image_url, post_urls)
+            combined_image_urls = set().union(*results)
+        return combined_image_urls
+    
     def scrape(self):
         """Main scraping method."""
         os.makedirs(self.output_folder, exist_ok=True)
         try:
-            while len(self.image_urls) < self.max_images:
+            while self.max_images > 0:
                 # Get post IDs from the current page
                 post_urls = self.get_post_ids(self.page_number)
-                if not post_urls:
-                    print("No more posts found")
-                    break
-                self.process_page_posts(post_urls)
+                image_urls = self.process_page_posts(post_urls)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(post_urls)) as executor:
+                    executor.map(
+                        self.download_image,
+                        zip(
+                            range(self.download_idx, self.download_idx + len(post_urls)),
+                            image_urls
+                        )
+                    )
+                self.download_idx += len(post_urls)
+                self.max_images -= len(post_urls)
+                print(f"Download of {len(post_urls)} images is done, left {self.max_images}")
                 self.page_number += 1
-            # Download the images concurrently
-            final_urls = list(self.image_urls)[:self.max_images]
-            print(f"\nStarting to download {len(final_urls)} images...")
-            
-            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-                list(executor.map(
-                    self.download_image,
-                    enumerate(final_urls)
-                ))
-            print("Download Done")
-            return
+                
         except Exception as e:
             print(f"Error during scraping: {e}")
 
 if __name__ == "__main__":
     
-    tags = "acheron_(honkai:_star_rail)"
-    output_folder = os.path.join("danbooru_images", tags)
-    max_images = 50
+    tags = "firefly (honkai: star rail)"
+    max_images = 10
+    stopped_at_idx = 50 # 0 if fresh download
+    page_idx = 4
     
+    folder_name = re.sub(r"[(): ]", "_", tags)
+    output_folder = os.path.join("danbooru_images", folder_name)
     scraper_start_time = time.time()
     scraper = DanbooruScraper(
         tags=tags,
         output_folder=output_folder,
         max_images=max_images,
-        page_number=2
+        page_number=page_idx,
+        download_idx=stopped_at_idx
     )
     scraper.scrape()
     scraper_end_time = time.time()
