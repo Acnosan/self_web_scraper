@@ -73,11 +73,8 @@ class DanbooruScraper:
             )
             img_element = driver.find_element(By.CSS_SELECTOR, "img.fit-width")
             img_url = img_element.get_attribute('src')
-            
             if img_url:
-                #with self.url_lock:
                 self.image_urls.add(img_url)
-                    #print(f"Found image URL ({len(self.image_urls)} total)")
             
         except Exception as e:
             print(f"Error processing post {post_url}: {e}")
@@ -115,8 +112,6 @@ class DanbooruScraper:
                     print("No more posts found")
                     break
                 self.process_page_posts(post_urls)
-                if len(self.image_urls) >= self.max_images:
-                    break
                 self.page_number += 1
             # Download the images concurrently
             final_urls = list(self.image_urls)[:self.max_images]
@@ -135,9 +130,10 @@ class DanbooruScraper:
 if __name__ == "__main__":
     
     tags = "acheron_(honkai:_star_rail)"
-    output_folder = os.path.join("danbooru_images", "raiden_mei")
+    output_folder = os.path.join("danbooru_images", tags)
     max_images = 50
     
+    scraper_start_time = time.time()
     scraper = DanbooruScraper(
         tags=tags,
         output_folder=output_folder,
@@ -145,3 +141,6 @@ if __name__ == "__main__":
         page_number=2
     )
     scraper.scrape()
+    scraper_end_time = time.time()
+    
+    print(f"the time taken to get {max_images} images is : {(scraper_end_time-scraper_start_time):.2f}")
