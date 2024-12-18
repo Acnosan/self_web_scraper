@@ -29,7 +29,7 @@ class DanbooruScraper:
 
     def extract_image_urls(self, page):
         image_urls = set()
-        WebDriverWait(self.driver, 10).until(
+        WebDriverWait(self.driver, 15).until(
             EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".post-preview"))
         )
 
@@ -47,12 +47,12 @@ class DanbooruScraper:
                 continue
 
         # Then visit each post page separately
-        for post_id in post_ids:
+        for idx,post_id in enumerate(post_ids):
             post_url = f"{self.base_url}/posts/{post_id}"
             img_url = self.get_full_image_url(post_url)
             if img_url:
                 image_urls.add(img_url)
-                print(f"Url Extracted Successfully: {img_url}")
+                print(f"Url Extracted Successfully: {idx}")
 
         return image_urls
 
@@ -62,7 +62,7 @@ class DanbooruScraper:
             self.driver.get(post_url)
 
             # Wait for the image element to load
-            WebDriverWait(self.driver, 5).until(
+            WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.TAG_NAME, "img"))
             )
             # Wait a bit longer to ensure images are loaded
@@ -134,7 +134,7 @@ class DanbooruScraper:
             print(f"\nFound {len(final_urls)} unique posts. Starting download...")
             
             # Download images in parallel
-            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
                 results = list(executor.map(self.download_image, enumerate(final_urls)))
             
             for result in results:
@@ -148,7 +148,7 @@ if __name__ == "__main__":
     # Configuration
     tags = "acheron_(honkai:_star_rail)"  # Use underscores instead of spaces
     output_folder = os.path.join("danbooru_images", "acheron")
-    max_images = 12  # Adjust this number as needed
+    max_images = 2000  # Adjust this number as needed
     
     # Create and run scraper
     scraper = DanbooruScraper(
