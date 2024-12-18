@@ -15,11 +15,12 @@ from queue import Queue
 from threading import Lock
 
 class DanbooruScraper:
-    def __init__(self, tags, output_folder, max_images=100):
+    def __init__(self, tags, output_folder, max_images ,page_number):
         self.base_url = "https://danbooru.donmai.us"
         self.tags = quote(tags.replace(' ', '_'))
         self.output_folder = output_folder
         self.max_images = max_images
+        self.page_number = page_number
         self.image_urls = set()
         self.url_lock = Lock()
         self.drivers = Queue()
@@ -27,7 +28,7 @@ class DanbooruScraper:
     def create_driver(self):
         """Create a new browser instance."""
         options = Options()
-        #options.add_argument("--headless")
+        #options.add_argument('--headless=new')
         options.add_argument("--window-size=1280,720")
         service = Service(ChromeDriverManager().install())
         return webdriver.Chrome(service=service, options=options)
@@ -35,22 +36,30 @@ class DanbooruScraper:
     def get_post_ids(self, page):
         """Extract post IDs from the search page."""
         driver = self.create_driver()
+        #try:
+        search_url = f"{self.base_url}/posts?tags={self.tags}&page={page}"
+        print(f"\nLoading search page {page}: {search_url}")
+        driver.get(search_url)
+        
+        WebDriverWait(driver, 6).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, ".post-preview"))
+        )
         try:
-            search_url = f"{self.base_url}/posts?tags={self.tags}&page={page}"
-            print(f"\nLoading search page {page}: {search_url}")
-            driver.get(search_url)
-            
-            WebDriverWait(driver, 8).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".post-preview"))
-            )
-            
             posts = driver.find_elements(By.CSS_SELECTOR, ".post-preview")
-            post_ids = [post.get_attribute('data-id') for post in posts if post.get_attribute('data-id')]
-            print(f"Found {len(post_ids)} posts on page {page}")
-            return post_ids
+            post_ids = []
+            for post in posts:
+                if len(post_ids) >= self.max_images:  # Check if we've reached the limit
+                    break  # Exit the loop if we have enough posts
+                post_id = post.get_attribute('data-id')
+                if post_id:
+                    post_ids.append(post_id)
+        except Exception as e:
+                print(f"Error processing post {posts}: {e}")
             
         finally:
             driver.quit()
+            print(f"Found {len(post_ids)} posts on page (limited by max_images={self.max_images})")
+            return post_ids
 
     def get_image_url(self, post_id):
         """Get image URL from a single post using a driver from the pool."""
@@ -59,10 +68,9 @@ class DanbooruScraper:
             post_url = f"{self.base_url}/posts/{post_id}"
             driver.get(post_url)
             
-            WebDriverWait(driver, 8).until(
+            WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.TAG_NAME, "img"))
             )
-            
             img_element = driver.find_element(By.CSS_SELECTOR, "img.fit-width")
             img_url = img_element.get_attribute('src')
             
@@ -70,7 +78,7 @@ class DanbooruScraper:
                 with self.url_lock:
                     if len(self.image_urls) < self.max_images:
                         self.image_urls.add(img_url)
-                        print(f"Found image URL ({len(self.image_urls)} total): {img_url}")
+                        #print(f"Found image URL ({len(self.image_urls)} total)")
             
         except Exception as e:
             print(f"Error processing post {post_id}: {e}")
@@ -96,49 +104,47 @@ class DanbooruScraper:
     def process_page_posts(self, post_ids):
         """Process all posts from a page concurrently."""
         with concurrent.futures.ThreadPoolExecutor(max_workers=11) as executor:
+            print("starting the executor for processing images scr from urls")
             executor.map(self.get_image_url, post_ids)
 
     def scrape(self):
         """Main scraping method."""
         os.makedirs(self.output_folder, exist_ok=True)
-        
         try:
-            page = 1
             while len(self.image_urls) < self.max_images:
                 # Get post IDs from the current page
-                post_ids = self.get_post_ids(page)
-                
+                post_ids = self.get_post_ids(self.page_number)
                 if not post_ids:
                     print("No more posts found")
                     break
-                
-                # Process posts concurrently
                 self.process_page_posts(post_ids)
-                
-                if len(self.image_urls) > self.max_images:
+                if len(self.image_urls) >= self.max_images:
                     break
-                    
-                page += 1
+                self.page_number += 1
             # Download the images concurrently
             final_urls = list(self.image_urls)[:self.max_images]
-            print(f"\nStarting download of {len(final_urls)} images...")
+            print(f"\nStarting to download {len(final_urls)} images...")
             
-            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                executor.map(
+            with concurrent.futures.ThreadPoolExecutor(max_workers=11) as executor:
+                list(executor.map(
                     self.download_image,
-                    enumerate(final_urls))
+                    enumerate(final_urls)
+                ))
             print("Download Done")
+            return
         except Exception as e:
             print(f"Error during scraping: {e}")
 
 if __name__ == "__main__":
-    tags = "kiana_kaslana"
-    output_folder = os.path.join("danbooru_images", "kiana")
-    max_images = 10
+    
+    tags = "detroit: become human"
+    output_folder = os.path.join("danbooru_images", "detroit")
+    max_images = 5
     
     scraper = DanbooruScraper(
         tags=tags,
         output_folder=output_folder,
-        max_images=max_images
+        max_images=max_images,
+        page_number=1
     )
     scraper.scrape()
