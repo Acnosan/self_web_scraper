@@ -100,7 +100,7 @@ class DanbooruScraper:
             
     def process_page_posts(self, post_urls):
         """Process all posts from a page concurrently."""
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
             print("starting the executor for processing images scr from urls")
             results = executor.map(self.get_image_url, post_urls)
             combined_image_urls = set().union(*results)
@@ -132,10 +132,10 @@ class DanbooruScraper:
 
 if __name__ == "__main__":
     
-    tags = "firefly (honkai: star rail)"
-    max_images = 10
-    stopped_at_idx = 50 # 0 if fresh download
-    page_idx = 4
+    tags = "acheron_(honkai:_star_rail)"
+    max_images = 1000
+    stopped_at_idx = 0 # 0 if fresh download
+    page_idx = 1
     
     folder_name = re.sub(r"[(): ]", "_", tags)
     output_folder = os.path.join("danbooru_images", folder_name)
