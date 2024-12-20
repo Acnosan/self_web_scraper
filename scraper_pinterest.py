@@ -133,11 +133,11 @@ class PinterestScraper:
 
 if __name__ == "__main__":
     # Configuration
-    search_query = "roger"
+    search_query = "it"
     
     folder_name = re.sub(r"[ ,]","__",search_query)
     output_folder = os.path.join("pinterest_images", folder_name)
-    max_images = 20
+    max_images = 10
     
     # Create and run scraper
     scraper = PinterestScraper(search_query, output_folder, folder_name, max_images)
