@@ -39,6 +39,7 @@ class PixivScraper():
     def init_driver_service_options(self):
         options = Options()
         # Performance optimizations
+        options.add_argument('--headless')
         options.add_argument('--no-sandbox')  # Bypass OS security model, required in some environments
         options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
         #options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
@@ -65,7 +66,7 @@ class PixivScraper():
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service,options=options)
         return driver
-    
+
     def load_cookies(self):
         try:
             cookies_path = os.path.join(os.getcwd(),"pixiv_cookies.json")
@@ -173,10 +174,11 @@ class PixivScraper():
         search_url = f"{self.base_url}/tags/{self.tag}/illustrations"
         if self.page_idx > 1:
             search_url += f"?p={self.page_idx}"
-        print(f"Loading Page {self.page_idx}: {search_url}")
+        print(f"\nLoading Page {self.page_idx}: {search_url}\n")
         posts_ids = []
         try:
             self.driver.get(search_url)
+            self._scroll_and_load_images()
             wait = WebDriverWait(self.driver, 10)
             posts = wait.until(
                 EC.presence_of_all_elements_located(
@@ -210,27 +212,24 @@ class PixivScraper():
     def _wait_for_content(self):
         """Wait for the content to load and return the presentation div."""
         try:
-            wait = WebDriverWait(self.driver, 8)
+            wait = WebDriverWait(self.driver, 7)
             return wait.until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='presentation']"))
             )
         except Exception as e:
             print(f"Timeout waiting for content: {str(e)}")
         return False
-        
+
     def _handle_show_all_button(self) -> None:
         """Click 'Show All' button if it exists."""
         try:
-            wait = WebDriverWait(self.driver, 8)
-            show_all_button = wait.until(
-                EC.presence_of_element_located((By.XPATH, "//div[text() = 'Show all']"))
-            )
-            show_all_button.click()
+            self.driver.find_element(By.XPATH,"//div[text() = 'Show all']").click()
             #time.sleep(1)
             #print("'Show All' button found - Multiple image post")
         except Exception:
-            print("No 'Show All' button found - Single image post")
-            
+            #print("No 'Show All' button found - Single image post")
+            pass
+
     def _scroll_and_load_images(self):
         try:
             for _ in range(2):  # Adjust the range based on the number of scrolls needed
@@ -238,7 +237,7 @@ class PixivScraper():
                 time.sleep(1)  # Wait for new images to load
         except Exception as e:
             print(f"Error while scrolling: {e}")
-            
+
     def _handle_show_all_images(self) -> None:
         try:
             wait = WebDriverWait(self.driver,5)
@@ -248,7 +247,7 @@ class PixivScraper():
         except Exception as e:
             print(f"Exception During Waiting For All Images To Show : {e}")
             return []
-        
+
     def _process_image_src(self,post_id):
         images_srcs = set()
         images = self._handle_show_all_images()
@@ -304,7 +303,7 @@ class PixivScraper():
                 print(f"Image {image_src} Is Not Downloaded")
         except Exception as e:
             print(f"Error downloading image {image_name}:{e}")
-    
+
     def multi_threading_extract_srcs(self, posts_ids):
         print("Multi Threading Of SRCs Extraction BEGIN....")
         combined_images_srcs = set()
@@ -346,7 +345,7 @@ class PixivScraper():
         except Exception as e:
             print(f"Exception During Session Configuration .. {e}")
         return session
-    
+
     def multi_threading_download_images(self,images_srcs,posts_ids):
         print("Multi Threading Of Downloading Images BEGIN....")
         self.session = self._make_session()
@@ -360,7 +359,6 @@ class PixivScraper():
                     posts_ids
                 )
             )
-
 
     def scrape(self):
         os.makedirs(self.output_folder,exist_ok=True)
@@ -402,9 +400,9 @@ def count_images_os(folder_path):
     return count
 
 if __name__ == "__main__":
-    tag = "acheron"
+    tag = "raidenshogun"
     page_idx = 1
-    max_images_posts = 70
+    max_images_posts = 600
     output_folder = os.path.join("pixiv_images",tag)
     file_name = tag+"img"
     stopped_at_download_idx = 0
@@ -423,4 +421,8 @@ if __name__ == "__main__":
     print(f"Scaper took {(end_time-begin_time):.2f} seconds with final result of {count_images_os(output_folder)} images.")
     
     
-# for 104 images => 11.5215 minutes
+# for 104 images => 11.52 minutes
+# for 119 images => 13.81 minutes
+# for 254 images => 12.76 minutes
+# for 723 images => 22.4 minutes
+# for 1268 images => 43.35 minutes
