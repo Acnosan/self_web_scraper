@@ -18,7 +18,7 @@ from datetime import datetime
 
 PIXIV_EMAIL = os.getenv("PIXIV_EMAIL")
 PIXIV_PASSWORD = os.getenv("PIXIV_PASSWORD")
-MAX_WORKERS_EXTRACT_SRCS = 3
+MAX_WORKERS_EXTRACT_SRCS = 1
 MAX_WORKERS_DOWNLOAD_IMAGES = 10
 
 class PixivScraper():
@@ -210,7 +210,7 @@ class PixivScraper():
     def _wait_for_content(self):
         """Wait for the content to load and return the presentation div."""
         try:
-            wait = WebDriverWait(self.driver, 5)
+            wait = WebDriverWait(self.driver, 8)
             return wait.until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='presentation']"))
             )
@@ -221,27 +221,27 @@ class PixivScraper():
     def _handle_show_all_button(self) -> None:
         """Click 'Show All' button if it exists."""
         try:
-            wait = WebDriverWait(self.driver, 2)
+            wait = WebDriverWait(self.driver, 8)
             show_all_button = wait.until(
                 EC.presence_of_element_located((By.XPATH, "//div[text() = 'Show all']"))
             )
             show_all_button.click()
             #time.sleep(1)
-            print("'Show All' button found - Multiple image post")
+            #print("'Show All' button found - Multiple image post")
         except Exception:
             print("No 'Show All' button found - Single image post")
             
     def _scroll_and_load_images(self):
         try:
-            for _ in range(3):  # Adjust the range based on the number of scrolls needed
-                self.driver.execute_script("window.scrollBy(0, 800);")  # Scroll down
-                time.sleep(2)  # Wait for new images to load
+            for _ in range(2):  # Adjust the range based on the number of scrolls needed
+                self.driver.execute_script("window.scrollBy(0, 600);")  # Scroll down
+                time.sleep(1)  # Wait for new images to load
         except Exception as e:
             print(f"Error while scrolling: {e}")
             
     def _handle_show_all_images(self) -> None:
         try:
-            wait = WebDriverWait(self.driver,10)
+            wait = WebDriverWait(self.driver,5)
             return wait.until(
                 EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[role='presentation'] img "))
             )
@@ -252,7 +252,7 @@ class PixivScraper():
     def _process_image_src(self,post_id):
         images_srcs = set()
         images = self._handle_show_all_images()
-        print(f"Found {len(images)} images in post {post_id}")
+        #print(f"Found {len(images)} images in post {post_id}")
         for idx,image in enumerate(images):
             image_src = image.get_attribute('src')
             if not image_src:
@@ -284,14 +284,14 @@ class PixivScraper():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         image_name = f"{self.file_name}_idx_{idx + 1:04d}_{timestamp}.jpg"
         image_path = os.path.join(self.output_folder, image_name)
-        print(f"Attempting to download image {image_src} as {image_name}")
+        #print(f"Attempting to download image {image_src} as {image_name}")
         try:
             headers = {
                 "Referer": f"{self.base_url}/artworks/{post_id}",
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             }
             response = session.get(image_src,headers=headers)
-            print(f"Status code for {image_src}: {response.status_code}")
+            #print(f"Status code for {image_src}: {response.status_code}")
             if response.status_code != 200:
                 print(f"Failed to fetch image {image_src}")
                 return
@@ -299,7 +299,7 @@ class PixivScraper():
             try:
                 with open(image_path, 'wb') as image:
                     image.write(response.content)
-                    print(f"Image {image_src} Downloaded Successfully")
+                    #print(f"Image {image_src} Downloaded Successfully")
             except Exception as e:
                 print(f"Image {image_src} Is Not Downloaded")
         except Exception as e:
@@ -349,21 +349,18 @@ class PixivScraper():
     
     def multi_threading_download_images(self,images_srcs,posts_ids):
         print("Multi Threading Of Downloading Images BEGIN....")
-        try:
-            self.session = self._make_session()
-            with THREAD.ThreadPoolExecutor(max_workers=MAX_WORKERS_DOWNLOAD_IMAGES) as executor:
-                executor.map(
-                    lambda args: self.download_image(self.session, *args),
-                    zip(
-                        range(self.stopped_at_download_idx, 
-                            self.stopped_at_download_idx + len(images_srcs)),
-                        images_srcs,
-                        posts_ids
-                    )
+        self.session = self._make_session()
+        with THREAD.ThreadPoolExecutor(max_workers=MAX_WORKERS_DOWNLOAD_IMAGES) as executor:
+            executor.map(
+                lambda args: self.download_image(self.session, *args),
+                zip(
+                    range(self.stopped_at_download_idx, 
+                        self.stopped_at_download_idx + len(images_srcs)),
+                    images_srcs,
+                    posts_ids
                 )
-        finally:
-            self.max_images_posts -= len(posts_ids)
-            self.stopped_at_download_idx += len(images_srcs)
+            )
+
 
     def scrape(self):
         os.makedirs(self.output_folder,exist_ok=True)
@@ -383,6 +380,8 @@ class PixivScraper():
                         print("multithreading extract srcs returned Nothing...")
                         break
                     self.multi_threading_download_images(images_srcs,posts_ids)
+                    self.max_images_posts -= len(retrieved_posts_ids)
+                    self.stopped_at_download_idx += len(images_srcs)
                 except Exception as e:
                     print(f"Failed to process post: {e}")
                     continue
@@ -405,7 +404,7 @@ def count_images_os(folder_path):
 if __name__ == "__main__":
     tag = "acheron"
     page_idx = 1
-    max_images_posts = 2
+    max_images_posts = 70
     output_folder = os.path.join("pixiv_images",tag)
     file_name = tag+"img"
     stopped_at_download_idx = 0
@@ -422,3 +421,6 @@ if __name__ == "__main__":
     scraper.scrape()
     end_time = time.time()
     print(f"Scaper took {(end_time-begin_time):.2f} seconds with final result of {count_images_os(output_folder)} images.")
+    
+    
+# for 104 images => 11.5215 minutes
