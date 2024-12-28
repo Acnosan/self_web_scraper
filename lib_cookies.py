@@ -17,7 +17,7 @@ class pixiv_cookies:
             if os.path.exists(cookies_path):
                 with open("pixiv_cookies.json", "r") as file:
                     cookies = json.load(file)
-                print(f"Cookies File Is Located!")
+                #print(f"Cookies File Is Located!")
                 return cookies
             else:
                 print(f"No Cookies File Is Located, Making New One..")
@@ -36,8 +36,8 @@ class pixiv_cookies:
                     print(f"Skipping cookie due to domain mismatch: {cookie['name']}")
                     continue  # Skip this cookie if the domain doesn't match
                 # Remove problematic attributes
-                cookie.pop('expiry', None)  # Sometimes expiry can cause issues
-                cookie.pop('sameSite', None)  # Remove if present
+                #cookie.pop('expiry', None)  # Sometimes expiry can cause issues
+                #cookie.pop('sameSite', None)  # Remove if present
                 
                 try:
                     driver.add_cookie(cookie)

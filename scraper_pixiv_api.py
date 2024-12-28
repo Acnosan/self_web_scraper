@@ -19,7 +19,7 @@ from lib_cookies import pixiv_cookies
 
 PIXIV_EMAIL = os.getenv("PIXIV_EMAIL")
 PIXIV_PASSWORD = os.getenv("PIXIV_PASSWORD")
-MAX_WORKERS_EXTRACT_SRCS = 1
+MAX_WORKERS_EXTRACT_SRCS = 5
 MAX_WORKERS_DOWNLOAD_IMAGES = 10
 
 class PixivScraper():
@@ -32,51 +32,18 @@ class PixivScraper():
         self.output_folder = output_folder
         self.file_name = file_name
         self.stopped_at_download_idx = stopped_at_download_idx
-        
         self.driver = None
         self.session = None
         self.cookies = None
-        self.lock = threading.Lock()
-
-    def init_driver_service_options(self):
-        options = Options()
-        # Performance optimizations
-        options.add_argument('--headless')
-        options.add_argument('--no-sandbox')  # Bypass OS security model, required in some environments
-        options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
-        #options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
-        options.add_argument('--disable-infobars')  # Disable infobars
-        options.add_argument('--disable-notifications')  # Disable notifications
-        # Memory optimizations
-        options.add_argument('--disable-logging')  # Disable logging
-        options.add_argument('--disable-extensions')  # Disable extensions
-        options.add_argument('--disable-popup-blocking')  # Disable popup blocking
-        options.add_argument('--disable-http-cache')
-        options.add_argument('--dns-prefetch-disable')
-        # Anti-detection measures
-        #options.add_argument('--disable-blink-features=AutomationControlled')
-        #options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        #options.add_experimental_option('useAutomationExtension', False)
         
-        options.add_argument("--window-size=1280,720")
-        options.add_argument('--log-level=3')  # This suppresses the DevTools message
-        prefs = {
-            "profile.managed_default_content_settings.images": 2,  # 2 = Block images
-        }
-        options.add_experimental_option("prefs", prefs)
-        options.add_experimental_option('excludeSwitches', ['enable-logging'])  # This suppresses console logging
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service,options=options)
-        return driver
-
-    def create_driver(self):
-        driver = self.init_driver_service_options()
-        driver.get(self.base_url)
-        self.cookies = pixiv_cookies_manager._wait_load_cookies()
-        if pixiv_cookies_manager.verify_cookies(self.cookies,driver):
-            print("Cookies Verified, Refreshed....")
-        return driver
-
+    def _scroll_and_load_images(self):
+        try:
+            for _ in range(2):  # Adjust the range based on the number of scrolls needed
+                self.driver.execute_script("window.scrollBy(0, 600);")  # Scroll down
+                time.sleep(1)  # Wait for new images to load
+        except Exception as e:
+            print(f"Error while scrolling: {e}")
+            
     def extract_posts(self):
         #self.driver = self.init_driver_service_options()
         search_url = f"{self.base_url}/tags/{self.tag}/illustrations"
@@ -110,82 +77,27 @@ class PixivScraper():
             print(f"Error occurred in extract_posts: {e}")
             return []
 
-    def _open_post_tab(self, post_id):
-        """Open the post in a new tab."""
-        self.driver.execute_script(f"window.open('{self.base_url}/artworks/{post_id}');")
-        tab_index = len(self.driver.window_handles) - 1
-        self.driver.switch_to.window(self.driver.window_handles[tab_index])
-        #print(f"Opened new tab for post {post_id}")
-
-    def _wait_for_content(self):
-        """Wait for the content to load and return the presentation div."""
-        try:
-            wait = WebDriverWait(self.driver, 7)
-            return wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='presentation']"))
-            )
-        except Exception as e:
-            print(f"Timeout waiting for content: {str(e)}")
-        return False
-
-    def _handle_show_all_button(self) -> None:
-        """Click 'Show All' button if it exists."""
-        try:
-            self.driver.find_element(By.XPATH,"//div[text() = 'Show all']").click()
-            #time.sleep(1)
-            #print("'Show All' button found - Multiple image post")
-        except Exception:
-            #print("No 'Show All' button found - Single image post")
-            pass
-
-    def _scroll_and_load_images(self):
-        try:
-            for _ in range(2):  # Adjust the range based on the number of scrolls needed
-                self.driver.execute_script("window.scrollBy(0, 600);")  # Scroll down
-                time.sleep(1)  # Wait for new images to load
-        except Exception as e:
-            print(f"Error while scrolling: {e}")
-
-    def _handle_show_all_images(self) -> None:
-        try:
-            wait = WebDriverWait(self.driver,5)
-            return wait.until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[role='presentation'] img "))
-            )
-        except Exception as e:
-            print(f"Exception During Waiting For All Images To Show : {e}")
-            return []
-
-    def _process_image_src(self,post_id):
-        images_srcs = set()
-        images = self._handle_show_all_images()
-        #print(f"Found {len(images)} images in post {post_id}")
-        for idx,image in enumerate(images):
-            image_src = image.get_attribute('src')
-            if not image_src:
-                print(f"No source found for image {idx} in post {post_id}")
-                continue
-            images_srcs.add(image_src)
-            #print(f"{image_src} : ADDED")
-        return images_srcs
-
     def extract_srcs(self,post_id):
-        images_srcs = set()  # Ensure it's initialized
+        images_srcs = list()  # Ensure it's initialized
+        url = f"https://www.pixiv.net/ajax/illust/{post_id}/pages"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Referer": f"https://www.pixiv.net/en/artworks/{post_id}",
+            "Cookie": "; ".join([f"{cookie['name']}={cookie['value']}" for cookie in self.cookies])  # Replace with your cookies
+        }
         try:
-            with self.lock:
-                self._open_post_tab(post_id)
-                if self._wait_for_content():
-                    #print("Images Content Are Present")
-                    self._handle_show_all_button()
-                    self._scroll_and_load_images()
-                    images_srcs = self._process_image_src(post_id)
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                image_src = response.json()
+                body = image_src.get('body',[]) 
+                for page in body:
+                    img_url = page.get("urls",{}).get("original",None)  # Use "original" or other sizes if needed
+                    print(f"image url is : {img_url}")
+                    images_srcs.append((img_url, post_id))
         except Exception as e:
             print(f"Error processing post {post_id}: {str(e)}")
-        finally:
-            with self.lock:
-                self.driver.close()
-                self.driver.switch_to.window(self.driver.window_handles[0])
-        return [(src, post_id) for src in images_srcs]
+        # Return a list of tuples with image URLs and the post_id
+        return images_srcs
 
     def download_image(self,session,idx,image_src,post_id):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -211,7 +123,7 @@ class PixivScraper():
                 print(f"Image {image_src} Is Not Downloaded")
         except Exception as e:
             print(f"Error downloading image {image_name}:{e}")
-
+            
     def multi_threading_extract_srcs(self, posts_ids):
         print("Multi Threading Of SRCs Extraction BEGIN....")
         combined_images_srcs = set()
@@ -235,7 +147,21 @@ class PixivScraper():
                 return set(), []
         
         print(f"All Srcs Located With Total {len(combined_images_srcs)} : Combined Posts Urls : {len(combined_posts_ids)}")
+        print(f"the posts urls : {combined_posts_ids}\n the images srcs : {combined_images_srcs}")
         return combined_images_srcs, combined_posts_ids
+
+    def multi_threading_download_images(self,images_srcs,posts_ids):
+        print("Multi Threading Of Downloading Images BEGIN....")
+        self.session = self._make_session()
+        with THREAD.ThreadPoolExecutor(max_workers=MAX_WORKERS_DOWNLOAD_IMAGES) as executor:
+            executor.map(
+                lambda args: self.download_image(self.session, *args),
+                zip(
+                    range(self.stopped_at_download_idx, self.stopped_at_download_idx + len(images_srcs)),
+                    images_srcs,
+                    posts_ids
+                )
+            )
 
     def _make_session(self):
         session = requests.Session()
@@ -253,21 +179,46 @@ class PixivScraper():
         except Exception as e:
             print(f"Exception During Session Configuration .. {e}")
         return session
-
-    def multi_threading_download_images(self,images_srcs,posts_ids):
-        print("Multi Threading Of Downloading Images BEGIN....")
-        self.session = self._make_session()
-        with THREAD.ThreadPoolExecutor(max_workers=MAX_WORKERS_DOWNLOAD_IMAGES) as executor:
-            executor.map(
-                lambda args: self.download_image(self.session, *args),
-                zip(
-                    range(self.stopped_at_download_idx, 
-                        self.stopped_at_download_idx + len(images_srcs)),
-                    images_srcs,
-                    posts_ids
-                )
-            )
-
+    
+    def init_driver_service_options(self):
+        options = Options()
+        # Performance optimizations
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')  # Bypass OS security model, required in some environments
+        options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
+        #options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
+        options.add_argument('--disable-infobars')  # Disable infobars
+        options.add_argument('--disable-notifications')  # Disable notifications
+        # Memory optimizations
+        options.add_argument('--disable-logging')  # Disable logging
+        options.add_argument('--disable-extensions')  # Disable extensions
+        options.add_argument('--disable-popup-blocking')  # Disable popup blocking
+        options.add_argument('--disable-http-cache')
+        options.add_argument('--dns-prefetch-disable')
+        # Anti-detection measures
+        #options.add_argument('--disable-blink-features=AutomationControlled')
+        #options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        #options.add_experimental_option('useAutomationExtension', False)
+        
+        options.add_argument("--window-size=1280,720")
+        options.add_argument('--log-level=3')  # This suppresses the DevTools message
+        prefs = {
+            "profile.managed_default_content_settings.images": 2,  # 2 = Block images
+        }
+        options.add_experimental_option("prefs", prefs)
+        options.add_experimental_option('excludeSwitches', ['enable-logging'])  # This suppresses console logging
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service,options=options)
+        return driver
+    
+    def create_driver(self):
+        driver = self.init_driver_service_options()
+        driver.get(self.base_url)
+        self.cookies = pixiv_cookies_manager._wait_load_cookies()
+        if pixiv_cookies_manager.verify_cookies(self.cookies,driver):
+            print("Cookies Verified, Refreshed....")
+        return driver
+    
     def scrape(self):
         os.makedirs(self.output_folder,exist_ok=True)
         if not pixiv_cookies_manager._wait_load_cookies():
@@ -315,7 +266,7 @@ def count_images_os(folder_path):
 if __name__ == "__main__":
     tag = "raidenshogun"
     page_idx = 1
-    max_images_posts = 1
+    max_images_posts = 10
     output_folder = os.path.join("scraped_datasets/pixiv_images",tag)
     file_name = tag+"img"
     stopped_at_download_idx = 0
