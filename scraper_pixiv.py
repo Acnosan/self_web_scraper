@@ -15,6 +15,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 import concurrent.futures as THREAD
 from datetime import datetime
+from lib_cookies import pixiv_cookies
 
 PIXIV_EMAIL = os.getenv("PIXIV_EMAIL")
 PIXIV_PASSWORD = os.getenv("PIXIV_PASSWORD")
@@ -34,6 +35,7 @@ class PixivScraper():
         
         self.driver = None
         self.session = None
+        self.cookies = None
         self.lock = threading.Lock()
 
     def init_driver_service_options(self):
@@ -67,105 +69,11 @@ class PixivScraper():
         driver = webdriver.Chrome(service=service,options=options)
         return driver
 
-    def load_cookies(self):
-        try:
-            cookies_path = os.path.join(os.getcwd(),"pixiv_cookies.json")
-            if os.path.exists(cookies_path):
-                with open("pixiv_cookies.json", "r") as file:
-                    cookies = json.load(file)
-                #print(f"Cookies File Is Located!")
-                return cookies
-            else:
-                print(f"No Cookies File Is Located, Making New One..")
-                return None
-        except Exception as e:
-            print(f"Error Loading Cookies: {e}")
-            return None
-
-    def verify_cookies(self,cookies,driver):
-        try:
-            for cookie in cookies:
-                # Fix cookie domain if needed
-                if 'domain' not in cookie or not cookie['domain']:
-                    cookie['domain'] = '.pixiv.net'
-                    
-                if cookie['domain'] not in driver.current_url:
-                    print(f"Skipping cookie due to domain mismatch: {cookie['name']}")
-                    continue  # Skip this cookie if the domain doesn't match
-                # Remove problematic attributes
-                cookie.pop('expiry', None)  # Sometimes expiry can cause issues
-                cookie.pop('sameSite', None)  # Remove if present
-                
-                try:
-                    driver.add_cookie(cookie)
-                except Exception as e:
-                    print(f"Error adding specific cookie: {cookie.get('name')}: {e}")
-                    continue
-                #print("Cookies added Successfully")
-            driver.refresh()
-            return True     
-        except Exception as e:
-            print(f"Error during cookies adding to the driver : {e}")
-            return False   
-
-    def delete_cookies(self):
-        cookies_path = os.path.join(os.getcwd(),"pixiv_cookies.json")
-        if os.path.exists(cookies_path):
-            os.remove(cookies_path)
-            self.driver.quit()
-            print("Cookies file deleted successfully Thus Logged Out")
-
-    def _wait_for_auth(self,driver):
-        
-        driver.get(self.login_path)
-        try:
-            wait = WebDriverWait(driver,10)
-            email_input = wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text'][style='padding-right: 8px;']"))
-            )
-            password_input = wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password'][style='padding-right: 36px;']"))
-            )
-            login_button = wait.until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit'][height='40']"))
-            )
-            email_input.send_keys(PIXIV_EMAIL)
-            password_input.send_keys(PIXIV_PASSWORD)
-            login_button.click()
-            print("Logged in Successfully")
-            return True
-        except Exception as e:
-            logging.ERROR(f"Error During Passing Variables Or Login Button : {e}")
-        return False
-
-    def create_cookies(self):
-        if self.load_cookies():
-            self.driver = self.create_driver()
-            return True
-        driver = self.init_driver_service_options()
-        driver.delete_all_cookies()
-        self.driver = driver
-        try:
-            if not self._wait_for_auth(driver):
-                return False
-            driver.get(self.base_url)
-            cookies = driver.get_cookies()
-            if cookies:
-                with open("pixiv_cookies.json", "w") as file:
-                    json.dump(cookies, file)
-                print(f"Saved {len(cookies)} cookies")
-                return True
-        except Exception as e:
-            print(f"Login Problem {e}")
-            return False
-        finally:
-            pass
-
     def create_driver(self):
         driver = self.init_driver_service_options()
         driver.get(self.base_url)
-        cookies = self.load_cookies()
-        if self.verify_cookies(cookies,driver):
+        self.cookies = pixiv_cookies_manager._wait_load_cookies()
+        if pixiv_cookies_manager.verify_cookies(self.cookies,driver):
             print("Cookies Verified, Refreshed....")
         return driver
 
@@ -339,7 +247,7 @@ class PixivScraper():
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         try:
-            cookies = self.load_cookies()
+            cookies = self.cookies
             for cookie in cookies:
                 session.cookies.set(cookie['name'], cookie['value'])
         except Exception as e:
@@ -362,9 +270,14 @@ class PixivScraper():
 
     def scrape(self):
         os.makedirs(self.output_folder,exist_ok=True)
-        if not self.create_cookies():
-            print("ERROR COOKIES DRIVER CREATION, LEAVING...")
+        if not pixiv_cookies_manager._wait_load_cookies():
+            self.driver = self.init_driver_service_options()
+            is_cookies_created = pixiv_cookies_manager._wait_create_cookies(self.driver,self.base_url,self.login_path)
+            if not is_cookies_created:
+                print(f"ERROR COOKIES DRIVER CREATION, LEAVING... {e}")
+                return
         try:
+            self.driver = self.create_driver()
             while self.max_images_posts > 0:
                 if self.max_images_posts <= 0:
                     break
@@ -390,7 +303,7 @@ class PixivScraper():
                 print(f"Finished.. Quiting Process START")
             except:
                 pass
-            #self.delete_cookies()
+            #pixiv_cookies_manager.delete_cookies(self.driver)
             self.driver.quit()
 
 def count_images_os(folder_path):
@@ -402,10 +315,11 @@ def count_images_os(folder_path):
 if __name__ == "__main__":
     tag = "raidenshogun"
     page_idx = 1
-    max_images_posts = 600
+    max_images_posts = 2
     output_folder = os.path.join("pixiv_images",tag)
     file_name = tag+"img"
     stopped_at_download_idx = 0
+    driver = None
     
     begin_time = time.time()
     scraper = PixivScraper(
@@ -416,6 +330,8 @@ if __name__ == "__main__":
         file_name=file_name,
         stopped_at_download_idx=stopped_at_download_idx,
     )
+    pixiv_cookies_manager = pixiv_cookies()
+    
     scraper.scrape()
     end_time = time.time()
     print(f"Scaper took {(end_time-begin_time):.2f} seconds with final result of {count_images_os(output_folder)} images.")
