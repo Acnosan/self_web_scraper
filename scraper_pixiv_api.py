@@ -1,14 +1,8 @@
 import os
 import time
-import json
 import requests
-import threading
-import logging
 
 from selenium import webdriver
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
@@ -17,10 +11,8 @@ import concurrent.futures as THREAD
 from datetime import datetime
 from lib_cookies import pixiv_cookies
 
-PIXIV_EMAIL = os.getenv("PIXIV_EMAIL")
-PIXIV_PASSWORD = os.getenv("PIXIV_PASSWORD")
 MAX_WORKERS_EXTRACT_SRCS = 5
-MAX_WORKERS_DOWNLOAD_IMAGES = 10
+MAX_WORKERS_DOWNLOAD_IMAGES = 15
 
 class PixivScraper():
 
@@ -35,7 +27,6 @@ class PixivScraper():
         self.stopped_at_download_idx = stopped_at_download_idx
         self.driver = None
         self.session = None
-        self.cookies = None
 
     def init_driver_service_options(self):
         options = Options()
@@ -56,8 +47,6 @@ class PixivScraper():
         #options.add_argument('--disable-blink-features=AutomationControlled')
         #options.add_experimental_option("excludeSwitches", ["enable-automation"])
         #options.add_experimental_option('useAutomationExtension', False)
-        
-        options.add_argument("--window-size=1280,720")
         options.add_argument('--log-level=3')  # This suppresses the DevTools message
         prefs = {
             "profile.managed_default_content_settings.images": 2,  # 2 = Block images
@@ -68,52 +57,36 @@ class PixivScraper():
         driver = webdriver.Chrome(service=service,options=options)
         return driver
 
-    def create_driver(self):
-        driver = self.init_driver_service_options()
-        driver.get(self.base_url)
-        self.cookies = pixiv_cookies_manager._wait_load_cookies()
-        if pixiv_cookies_manager.verify_cookies(self.cookies,driver):
-            print("Cookies Verified, Refreshed....")
-        return driver
-
-    def _scroll_and_load_images(self):
-        try:
-            for _ in range(2):  # Adjust the range based on the number of scrolls needed
-                self.driver.execute_script("window.scrollBy(0, 600);")  # Scroll down
-                time.sleep(1)  # Wait for new images to load
-        except Exception as e:
-            print(f"Error while scrolling: {e}")
-
     def extract_posts(self):
-        search_url = f"{self.base_url}/tags/{self.tag}/illustrations"
-        if self.page_idx > 1:
-            search_url += f"?p={self.page_idx}"
+        search_url = f"{self.base_url}/tags/{self.tag}/illustrations" + (f"?p={self.page_idx}" if self.page_idx>1 else '')
+
+        all_ids = set()
+        retrieved_posts_ids = []
         url = f"https://www.pixiv.net/ajax/search/illustrations/{self.tag}"
         headers = {
             "Referer": search_url,
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         }
-        all_ids = set()
-        retrieved_posts_ids = []
         try:
             response = requests.get(url,headers=headers)
             print(f"\nLoading on page {self.page_idx}\n")
-            if response.status_code == 200:
-                data_body = response.json()
-                body = data_body.get('body',{}) 
-                illust = body.get("illust",{}).get("data",[])
-                for post_id in illust:
-                    extracted_id = post_id.get('id',None)
-                    if extracted_id:
-                        all_ids.add(extracted_id)
-                if self.max_images_posts >= int(len(all_ids)-1):
-                    self.page_idx +=1
-                for post_id in all_ids:
-                    if len(retrieved_posts_ids) >= self.max_images_posts:
-                        break
-                    retrieved_posts_ids.append(post_id)
-            else:
+            if response.status_code != 200:
                 print(f"{response.status_code} is the status code : not 200")
+                return []
+            data_body = response.json()
+            body = data_body.get('body',{}) 
+            illust = body.get("illust",{}).get("data",[])
+            for post_id in illust:
+                extracted_id = post_id.get('id',None)
+                if extracted_id:
+                    all_ids.add(extracted_id)
+            if self.max_images_posts >= len(all_ids):
+                self.page_idx +=1
+            for post_id in all_ids:
+                if len(retrieved_posts_ids) >= self.max_images_posts:
+                    break
+                retrieved_posts_ids.append(post_id)
+                
             print(f"Found {len(all_ids)} posts on page, retrieved {len(retrieved_posts_ids)}, (limited by max_images_posts which left {self.max_images_posts} )")
             return retrieved_posts_ids
         except Exception as e:
@@ -129,14 +102,15 @@ class PixivScraper():
         }
         try:
             response = requests.get(url, headers=headers)
-            if response.status_code == 200:
-                image_src = response.json()
-                body = image_src.get('body',[]) 
-                for page in body:
-                    img_url = page.get("urls",{}).get("original","regular")  # Use "original" or other sizes if needed
-                    images_srcs.append((img_url, post_id))
-            else:
+            if response.status_code != 200:
                 print(f"{response.status_code} is the status code : not 200")
+                return []
+            image_src = response.json()
+            body = image_src.get('body',[]) 
+            urls = body.get("urls",{})
+            for src in urls:
+                image_src = src.get("original","regular")  # Use "original" or other sizes if needed
+                images_srcs.append((image_src, post_id))
         except Exception as e:
             print(f"Error processing post {post_id}: {str(e)}")
         # Return a list of tuples with image URLs and the post_id
@@ -169,7 +143,6 @@ class PixivScraper():
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             }
             response = session.get(image_src,headers=headers)
-            #print(f"Status code for {image_src}: {response.status_code}")
             if response.status_code != 200:
                 print(f"Failed to fetch image {image_src}")
                 return
@@ -177,7 +150,6 @@ class PixivScraper():
             try:
                 with open(image_path, 'wb') as image:
                     image.write(response.content)
-                    #print(f"Image {image_src} Downloaded Successfully")
             except Exception as e:
                 print(f"Image {image_src} Is Not Downloaded")
         except Exception as e:
@@ -236,18 +208,18 @@ class PixivScraper():
                     break
                 retrieved_posts_ids = self.extract_posts()
                 if len(retrieved_posts_ids) == 0:
-                    print("extract_posts returned Nothing...")
+                    print("extract_posts returned nothing...")
                     break
                 try:
                     images_srcs,posts_ids = self.multi_threading_extract_srcs(retrieved_posts_ids)
                     if not images_srcs:
-                        print("multithreading extract srcs returned Nothing...")
+                        print("multithreading extract srcs returned nothing...")
                         break
                     self.multi_threading_download_images(images_srcs,posts_ids)
                     self.max_images_posts -= len(retrieved_posts_ids)
                     self.stopped_at_download_idx += len(images_srcs)
                 except Exception as e:
-                    print(f"Failed to process post: {e}")
+                    print(f"Failed to process post after we retrieved the posts in scrap method: {e}")
                     continue
         except Exception as e:
             print(f"Error Occured in Scrape Method : {e}")

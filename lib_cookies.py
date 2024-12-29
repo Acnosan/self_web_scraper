@@ -36,8 +36,8 @@ class pixiv_cookies:
                     print(f"Skipping cookie due to domain mismatch: {cookie['name']}")
                     continue  # Skip this cookie if the domain doesn't match
                 # Remove problematic attributes
-                #cookie.pop('expiry', None)  # Sometimes expiry can cause issues
-                #cookie.pop('sameSite', None)  # Remove if present
+                cookie.pop('expiry', None)  # Sometimes expiry can cause issues
+                cookie.pop('sameSite', None)  # Remove if present
                 
                 try:
                     driver.add_cookie(cookie)
@@ -51,11 +51,10 @@ class pixiv_cookies:
             print(f"Error during cookies adding to the driver : {e}")
             return False   
 
-    def delete_cookies(self,driver):
+    def delete_cookies(self):
         cookies_path = os.path.join(os.getcwd(),"pixiv_cookies.json")
         if os.path.exists(cookies_path):
             os.remove(cookies_path)
-            driver.quit()
             print("Cookies file deleted successfully Thus Logged Out")
 
     def _wait_for_auth(self,driver,login_path):
