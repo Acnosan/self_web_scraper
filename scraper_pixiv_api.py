@@ -107,9 +107,8 @@ class PixivScraper():
                 return []
             image_src = response.json()
             body = image_src.get('body',[]) 
-            urls = body.get("urls",{})
-            for src in urls:
-                image_src = src.get("original","regular")  # Use "original" or other sizes if needed
+            for url in body:
+                image_src = url.get("urls",{}).get("original","regular")  # Use "original" or other sizes if needed
                 images_srcs.append((image_src, post_id))
         except Exception as e:
             print(f"Error processing post {post_id}: {str(e)}")
@@ -232,13 +231,16 @@ def count_images_os(folder_path):
     return count
 
 if __name__ == "__main__":
-    tag = "raidenshogun"
+    tag = "vergil"
     page_idx = 1
-    max_images_posts = 70
-    output_folder = os.path.join("scraped_datasets/pixiv_images",tag)
-    file_name = tag+"img"
+    max_images_posts = 5
     stopped_at_download_idx = 0
-    driver = None
+    # Ensure the base folder exists
+    os.makedirs('scraped_datasets', exist_ok=True)
+    # Create the Pixiv folder path
+    pixiv_folder = os.path.join('scraped_datasets', 'pixiv_images')
+    output_folder = os.path.join(pixiv_folder,tag)
+    file_name = tag+"_img"
     
     begin_time = time.time()
     scraper = PixivScraper(

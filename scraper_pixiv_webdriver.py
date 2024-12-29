@@ -1,6 +1,5 @@
 import os
 import time
-import json
 import requests
 import threading
 import logging
@@ -313,13 +312,18 @@ def count_images_os(folder_path):
     return count
 
 if __name__ == "__main__":
-    tag = "raidenshogun"
+    tag = "vergil"
     page_idx = 1
-    max_images_posts = 1
-    output_folder = os.path.join("scraped_datasets/pixiv_images",tag)
-    file_name = tag+"img"
+    max_images_posts = 5
     stopped_at_download_idx = 0
-    driver = None
+    # Ensure the base folder exists
+    os.makedirs('scraped_datasets', exist_ok=True)
+    # Define the scraped data folder
+    scraped_data_folder = 'scraped_datasets'
+    # Create the Pixiv folder path
+    pixiv_folder = os.path.join(scraped_data_folder, "pixiv_images")
+    output_folder = os.path.join(pixiv_folder,tag)
+    file_name = tag+"_img"
     
     begin_time = time.time()
     scraper = PixivScraper(
