@@ -23,6 +23,7 @@ MAX_WORKERS_EXTRACT_SRCS = 5
 MAX_WORKERS_DOWNLOAD_IMAGES = 10
 
 class PixivScraper():
+
     def __init__(self,tag,max_images_posts,page_idx,output_folder,file_name,stopped_at_download_idx):
         self.base_url = "https://www.pixiv.net/en"
         self.login_path = "https://accounts.pixiv.net/login"
@@ -35,151 +36,7 @@ class PixivScraper():
         self.driver = None
         self.session = None
         self.cookies = None
-        
-    def _scroll_and_load_images(self):
-        try:
-            for _ in range(2):  # Adjust the range based on the number of scrolls needed
-                self.driver.execute_script("window.scrollBy(0, 600);")  # Scroll down
-                time.sleep(1)  # Wait for new images to load
-        except Exception as e:
-            print(f"Error while scrolling: {e}")
-            
-    def extract_posts(self):
-        #self.driver = self.init_driver_service_options()
-        search_url = f"{self.base_url}/tags/{self.tag}/illustrations"
-        if self.page_idx > 1:
-            search_url += f"?p={self.page_idx}"
-        print(f"\nLoading Page {self.page_idx}: {search_url}\n")
-        posts_ids = []
-        try:
-            self.driver.get(search_url)
-            self._scroll_and_load_images()
-            wait = WebDriverWait(self.driver, 10)
-            posts = wait.until(
-                EC.presence_of_all_elements_located(
-                    (By.CSS_SELECTOR, "div[class*='sc-rp5asc-0'] > a")
-                )
-            )
-            
-            if self.max_images_posts >= int(len(posts)-1):
-                self.page_idx +=1
-                
-            for post in posts:
-                if len(posts_ids) >= self.max_images_posts:
-                    break
-                post_id = post.get_attribute('data-gtm-value')
-                if post_id:
-                    posts_ids.append(post_id)
-            print(f"Found {len(posts)} posts on page, retrieved {len(posts_ids)}, (limited by max_images_posts which left {self.max_images_posts} )")
-            #self.driver.quit()
-            return posts_ids
-        except Exception as e:
-            print(f"Error occurred in extract_posts: {e}")
-            return []
 
-    def extract_srcs(self,post_id):
-        images_srcs = list()  # Ensure it's initialized
-        url = f"https://www.pixiv.net/ajax/illust/{post_id}/pages"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "Referer": f"https://www.pixiv.net/en/artworks/{post_id}",
-            "Cookie": "; ".join([f"{cookie['name']}={cookie['value']}" for cookie in self.cookies])  # Replace with your cookies
-        }
-        try:
-            response = requests.get(url, headers=headers)
-            if response.status_code == 200:
-                image_src = response.json()
-                body = image_src.get('body',[]) 
-                for page in body:
-                    img_url = page.get("urls",{}).get("original",None)  # Use "original" or other sizes if needed
-                    print(f"image url is : {img_url}")
-                    images_srcs.append((img_url, post_id))
-        except Exception as e:
-            print(f"Error processing post {post_id}: {str(e)}")
-        # Return a list of tuples with image URLs and the post_id
-        return images_srcs
-
-    def download_image(self,session,idx,image_src,post_id):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        image_name = f"{self.file_name}_idx_{idx + 1:04d}_{timestamp}.jpg"
-        image_path = os.path.join(self.output_folder, image_name)
-        #print(f"Attempting to download image {image_src} as {image_name}")
-        try:
-            headers = {
-                "Referer": f"{self.base_url}/artworks/{post_id}",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-            }
-            response = session.get(image_src,headers=headers)
-            #print(f"Status code for {image_src}: {response.status_code}")
-            if response.status_code != 200:
-                print(f"Failed to fetch image {image_src}")
-                return
-            response.raise_for_status() 
-            try:
-                with open(image_path, 'wb') as image:
-                    image.write(response.content)
-                    #print(f"Image {image_src} Downloaded Successfully")
-            except Exception as e:
-                print(f"Image {image_src} Is Not Downloaded")
-        except Exception as e:
-            print(f"Error downloading image {image_name}:{e}")
-            
-    def multi_threading_extract_srcs(self, posts_ids):
-        print("Multi Threading Of SRCs Extraction BEGIN....")
-        combined_images_srcs = set()
-        combined_posts_ids = []
-        
-        with THREAD.ThreadPoolExecutor(max_workers=MAX_WORKERS_EXTRACT_SRCS) as EXE:
-            try:
-                # Execute extract_srcs for each post_id and collect results
-                all_results = []
-                results = EXE.map(self.extract_srcs, posts_ids)
-                for result in results:
-                    all_results.extend(result)
-                
-                # Process results while maintaining the relationship
-                for img_src, post_id in all_results:
-                    combined_images_srcs.add(img_src)
-                    combined_posts_ids.append(post_id)
-                        
-            except Exception as e:
-                print(f"Exception Occurred During Multi Threading Extract Srcs: {e}")
-                return set(), []
-        
-        print(f"All Srcs Located With Total {len(combined_images_srcs)} : Combined Posts Urls : {len(combined_posts_ids)}")
-        print(f"the posts urls : {combined_posts_ids}\n the images srcs : {combined_images_srcs}")
-        return combined_images_srcs, combined_posts_ids
-
-    def multi_threading_download_images(self,images_srcs,posts_ids):
-        print("Multi Threading Of Downloading Images BEGIN....")
-        self.session = self._make_session()
-        with THREAD.ThreadPoolExecutor(max_workers=MAX_WORKERS_DOWNLOAD_IMAGES) as executor:
-            executor.map(
-                lambda args: self.download_image(self.session, *args),
-                zip(
-                    range(self.stopped_at_download_idx, self.stopped_at_download_idx + len(images_srcs)),
-                    images_srcs,
-                    posts_ids
-                )
-            )
-
-    def _make_session(self):
-        session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(
-            pool_connections=20,
-            pool_maxsize=20,
-            max_retries=3
-        )
-        session.mount('http://', adapter)
-        session.mount('https://', adapter)
-        try:
-            cookies = self.cookies
-            for cookie in cookies:
-                session.cookies.set(cookie['name'], cookie['value'])
-        except Exception as e:
-            print(f"Exception During Session Configuration .. {e}")
-        return session
-    
     def init_driver_service_options(self):
         options = Options()
         # Performance optimizations
@@ -210,7 +67,7 @@ class PixivScraper():
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service,options=options)
         return driver
-    
+
     def create_driver(self):
         driver = self.init_driver_service_options()
         driver.get(self.base_url)
@@ -218,7 +75,153 @@ class PixivScraper():
         if pixiv_cookies_manager.verify_cookies(self.cookies,driver):
             print("Cookies Verified, Refreshed....")
         return driver
+
+    def _scroll_and_load_images(self):
+        try:
+            for _ in range(2):  # Adjust the range based on the number of scrolls needed
+                self.driver.execute_script("window.scrollBy(0, 600);")  # Scroll down
+                time.sleep(1)  # Wait for new images to load
+        except Exception as e:
+            print(f"Error while scrolling: {e}")
+
+    def extract_posts(self):
+        search_url = f"{self.base_url}/tags/{self.tag}/illustrations"
+        if self.page_idx > 1:
+            search_url += f"?p={self.page_idx}"
+        url = f"https://www.pixiv.net/ajax/search/illustrations/{self.tag}"
+        headers = {
+            "Referer": search_url,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        }
+        all_ids = set()
+        retrieved_posts_ids = []
+        try:
+            response = requests.get(url,headers=headers)
+            print(f"\nLoading on page {self.page_idx}\n")
+            if response.status_code == 200:
+                data_body = response.json()
+                body = data_body.get('body',{}) 
+                illust = body.get("illust",{}).get("data",[])
+                for post_id in illust:
+                    extracted_id = post_id.get('id',None)
+                    if extracted_id:
+                        all_ids.add(extracted_id)
+                if self.max_images_posts >= int(len(all_ids)-1):
+                    self.page_idx +=1
+                for post_id in all_ids:
+                    if len(retrieved_posts_ids) >= self.max_images_posts:
+                        break
+                    retrieved_posts_ids.append(post_id)
+            else:
+                print(f"{response.status_code} is the status code : not 200")
+            print(f"Found {len(all_ids)} posts on page, retrieved {len(retrieved_posts_ids)}, (limited by max_images_posts which left {self.max_images_posts} )")
+            return retrieved_posts_ids
+        except Exception as e:
+            print(f"Error occurred in extract_posts: {e}")
+            return []
+
+    def extract_srcs(self,post_id):
+        images_srcs = []  # Ensure it's initialized
+        url = f"https://www.pixiv.net/ajax/illust/{post_id}/pages"
+        headers = {
+            "Referer": f"https://www.pixiv.net/en/artworks/{post_id}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        }
+        try:
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                image_src = response.json()
+                body = image_src.get('body',[]) 
+                for page in body:
+                    img_url = page.get("urls",{}).get("original","regular")  # Use "original" or other sizes if needed
+                    images_srcs.append((img_url, post_id))
+            else:
+                print(f"{response.status_code} is the status code : not 200")
+        except Exception as e:
+            print(f"Error processing post {post_id}: {str(e)}")
+        # Return a list of tuples with image URLs and the post_id
+        return images_srcs
+
+    def _make_session(self):
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=20,
+            pool_maxsize=20,
+            max_retries=3
+        )
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        try:
+            for cookie in pixiv_cookies_manager._wait_load_cookies():
+                session.cookies.set(cookie['name'], cookie['value'])
+        except Exception as e:
+            print(f"Exception During Session Configuration .. {e}")
+        return session
     
+    def download_image(self,session,idx,image_src,post_id):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        image_name = f"{self.file_name}_idx_{idx + 1:04d}_{timestamp}.jpg"
+        image_path = os.path.join(self.output_folder, image_name)
+        #print(f"Attempting to download image {image_src} as {image_name}")
+        try:
+            headers = {
+                "Referer": f"{self.base_url}/artworks/{post_id}",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            }
+            response = session.get(image_src,headers=headers)
+            #print(f"Status code for {image_src}: {response.status_code}")
+            if response.status_code != 200:
+                print(f"Failed to fetch image {image_src}")
+                return
+            response.raise_for_status() 
+            try:
+                with open(image_path, 'wb') as image:
+                    image.write(response.content)
+                    #print(f"Image {image_src} Downloaded Successfully")
+            except Exception as e:
+                print(f"Image {image_src} Is Not Downloaded")
+        except Exception as e:
+            print(f"Error downloading image {image_name}:{e}")
+
+    def multi_threading_extract_srcs(self, posts_ids):
+        print("Multi Threading Of SRCs Extraction BEGIN....")
+        combined_images_srcs = set()
+        combined_posts_ids = []
+        
+        with THREAD.ThreadPoolExecutor(max_workers=MAX_WORKERS_EXTRACT_SRCS) as EXE:
+            try:
+                # Execute extract_srcs for each post_id and collect results
+                all_results = []
+                results = EXE.map(self.extract_srcs, posts_ids)
+                
+                for result in results:
+                    all_results.extend(result)
+                
+                # Process results while maintaining the relationship
+                for img_src, post_id in all_results:
+                    combined_images_srcs.add(img_src)
+                    combined_posts_ids.append(post_id)
+                        
+            except Exception as e:
+                print(f"Exception Occurred During Multi Threading Extract Srcs: {e}")
+                return set(), []
+        
+        print(f"All Srcs Located With Total {len(combined_images_srcs)} : Combined Posts Urls : {len(combined_posts_ids)}")
+        return combined_images_srcs, combined_posts_ids
+
+    def multi_threading_download_images(self,images_srcs,posts_ids):
+        print("Multi Threading Of Downloading Images BEGIN....")
+        self.session = self._make_session()
+        with THREAD.ThreadPoolExecutor(max_workers=MAX_WORKERS_DOWNLOAD_IMAGES) as executor:
+            executor.map(
+                lambda args: self.download_image(self.session, *args),
+                zip(
+                    range(self.stopped_at_download_idx, self.stopped_at_download_idx + len(images_srcs)),
+                    images_srcs,
+                    posts_ids
+                )
+            )
+
     def scrape(self):
         os.makedirs(self.output_folder,exist_ok=True)
         if not pixiv_cookies_manager._wait_load_cookies():
@@ -228,7 +231,6 @@ class PixivScraper():
                 print(f"ERROR COOKIES DRIVER CREATION, LEAVING... {e}")
                 return
         try:
-            self.driver = self.create_driver()
             while self.max_images_posts > 0:
                 if self.max_images_posts <= 0:
                     break
@@ -250,23 +252,17 @@ class PixivScraper():
         except Exception as e:
             print(f"Error Occured in Scrape Method : {e}")
         finally:
-            try:
-                print(f"Finished.. Quiting Process START")
-            except:
-                pass
-            #pixiv_cookies_manager.delete_cookies(self.driver)
-            self.driver.quit()
+            print(f"Finished.. Quiting Process START")
 
 def count_images_os(folder_path):
     image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
-    count = sum(1 for file in os.listdir(folder_path) 
-                if file.lower().endswith(image_extensions))
+    count = sum(1 for file in os.listdir(folder_path) if file.lower().endswith(image_extensions))
     return count
 
 if __name__ == "__main__":
     tag = "raidenshogun"
     page_idx = 1
-    max_images_posts = 10
+    max_images_posts = 70
     output_folder = os.path.join("scraped_datasets/pixiv_images",tag)
     file_name = tag+"img"
     stopped_at_download_idx = 0
@@ -286,10 +282,3 @@ if __name__ == "__main__":
     scraper.scrape()
     end_time = time.time()
     print(f"Scaper took {(end_time-begin_time):.2f} seconds with final result of {count_images_os(output_folder)} images.")
-    
-    
-# for 104 images => 11.52 minutes
-# for 119 images => 13.81 minutes
-# for 254 images => 12.76 minutes
-# for 723 images => 22.4 minutes
-# for 1268 images => 43.35 minutes
