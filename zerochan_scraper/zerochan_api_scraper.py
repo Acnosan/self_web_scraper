@@ -1,6 +1,6 @@
 import os
 import time
-import random
+import json
 import requests
 import concurrent.futures as THREAD
 from datetime import datetime
@@ -9,8 +9,8 @@ from tqdm import tqdm
 from threading import Lock
 from urllib3.util.retry import Retry
 
-MAX_WORKERS_EXTRACT_SRCS = 5
-MAX_WORKERS_DOWNLOAD_IMAGES = 8
+MAX_WORKERS_EXTRACT_SRCS = 10
+MAX_WORKERS_DOWNLOAD_IMAGES = 10
 # CAUSE HERE WE WILL HAVE TWO PROCESSES THAT USES THREADS TOTAL IS 20 SO MAX POOL SIZE > 20
 
 class ZeroChanScraper():
@@ -30,8 +30,8 @@ class ZeroChanScraper():
     def _make_session(self):
         session = requests.Session()
         adapter = requests.adapters.HTTPAdapter(
-            pool_connections=30,
-            pool_maxsize=30,
+            pool_connections=25,
+            pool_maxsize=25,
             max_retries=Retry(
                 total=4,
                 backoff_factor=1,  # Wait: 1s, 2s, 4s, etc.
@@ -85,26 +85,23 @@ class ZeroChanScraper():
                 print(f"{response.status_code} is the status code : not 200")
                 return []
             soup = BeautifulSoup(response.text, 'html.parser')
-            
-            images = soup.find('a', class_='preview').find('img')
-            image_src = images.get('src')
-            images_srcs.append((image_src,post_id))
+            script_tag = soup.find("script", type="application/ld+json")
+            image_src = json.loads(script_tag.string).get("contentUrl")
+            print(f"{post_id} : {image_src}")
+            images_srcs.append(image_src)
             #print(f"for post {post_id} :src {image_src}")
         except Exception as e:
             print(f"Error processing post {post_id}: {str(e)}")
         # Return a list of tuples with image URLs and the post_id
         return images_srcs
 
-    def download_image(self,session,idx,image_src,post_id):
+    def download_image(self,session,idx,image_src):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         image_name = f"{self.file_name}_idx_{idx + 1:04d}_{timestamp}.jpg"
         image_path = os.path.join(self.output_folder, image_name)
         #print(f"Attempting to download image {image_src} as {image_name}")
         try:
-            header={
-                "Referer":f"https://www.zerochan.net/{post_id}"
-            }
-            response = session.get(image_src,headers=header)
+            response = session.get(image_src)
             if response.status_code != 200:
                 print(f"Failed to fetch image {image_src}")
                 return
@@ -123,26 +120,20 @@ class ZeroChanScraper():
     def multi_threading_extract_srcs(self, posts_ids):
         #print("Multi Threading Of SRCs Extraction BEGIN....")
         combined_images_srcs = []
-        combined_images_ids = []
         with THREAD.ThreadPoolExecutor(max_workers=MAX_WORKERS_EXTRACT_SRCS) as EXE:
             try:
                 # Execute extract_srcs for each post_id and collect results
-                all_srcs_ids=[]
                 results = EXE.map(self.extract_srcs, posts_ids)
-                for result in results:
-                    all_srcs_ids.extend(result)
-                    
-                for image_src,image_id in all_srcs_ids:
+                for image_src in results:
                     combined_images_srcs.append(image_src)
-                    combined_images_ids.append(image_id)
             except Exception as e:
                 print(f"Exception Occurred During Multi Threading Extract Srcs: {e}")
                 return []
         
         #print(f"All Srcs Located With Total {len(combined_images_srcs)}")
-        return combined_images_srcs,combined_images_ids
+        return combined_images_srcs
 
-    def multi_threading_download_images(self,images_srcs,posts_ids):
+    def multi_threading_download_images(self,images_srcs):
         #print("Multi Threading Of Downloading Images BEGIN....")
         with THREAD.ThreadPoolExecutor(max_workers=MAX_WORKERS_DOWNLOAD_IMAGES) as executor:
             executor.map(
@@ -150,7 +141,6 @@ class ZeroChanScraper():
                 zip(
                     range(self.stopped_at_download_idx, self.stopped_at_download_idx + len(images_srcs)),
                     images_srcs,
-                    posts_ids
                 )
             )
 
@@ -174,11 +164,11 @@ class ZeroChanScraper():
                     print("extract_posts returned nothing...")
                     break
                 try:
-                    images_srcs,images_ids = self.multi_threading_extract_srcs(retrieved_posts_ids)
+                    images_srcs = self.multi_threading_extract_srcs(retrieved_posts_ids)
                     if not images_srcs:
                         print("multithreading extract srcs returned nothing...")
                         break
-                    self.multi_threading_download_images(images_srcs,images_ids)
+                    self.multi_threading_download_images(images_srcs)
                     self.max_images_posts -= len(retrieved_posts_ids)
                     self.stopped_at_download_idx += len(images_srcs)
                 except Exception as e:
@@ -195,7 +185,7 @@ def count_images_os(folder_path):
 if __name__ == "__main__":
     tag = "Hoshimi Miyabi"
     page_idx = 1
-    max_images_posts = 200
+    max_images_posts = 5
     stopped_at_download_idx = 0
     
     os.makedirs('../scraped_datasets', exist_ok=True)
