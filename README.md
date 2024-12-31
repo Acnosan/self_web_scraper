@@ -5,12 +5,17 @@ I made this project for personal use as a data science student so that I could u
 The choice of these 3 websites is based on the high quality images they provide.
 The code is divided into sections where:
 * **lib_cookies.py** is a cookies manager class .
-* **scraper_pixiv** has two version :
-### "scraper_pixiv_api" 
+* **pixiv_scraper** has two version :
+### "pixiv_api_scraper.py" 
 - uses pixiv api to request and get the data, processing speed is VERY FAST.
-### "scraper_pixiv_webdriver"
+### "pixiv_webdriver_scraper.py"
 - uses web driver instances to mimic a real user interaction, processing speed is VERY SLOW (it was my first attempt).
-* **scraper_danbooru.py** and **scraper_pinterest.py** same as the pixiv webdriver one, STILL IN PRODUCTION. 
+* **zerochan_api_scraper.py** uses bs4 to request and get the data, processing speed is VERY FAST. "note: no need to login, thus no cookies are required"
+* **danbooru_scraper** has two version, same as pixiv one. "note: api version STILL IN PRODUCTION."
+* **pinterest_scraper.py** same as the pixiv webdriver one, "note: STILL IN PRODUCTION." 
+
+## Results :
+pixiv_api and zerochan_api are the best versions here, works totally fine.
 
 ## Requirements :
 
