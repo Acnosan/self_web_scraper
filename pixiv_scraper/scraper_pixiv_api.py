@@ -1,7 +1,7 @@
 import os
 import time
 import requests
-
+import urllib
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -11,8 +11,8 @@ import concurrent.futures as THREAD
 from datetime import datetime
 from lib_cookies import pixiv_cookies
 
-MAX_WORKERS_EXTRACT_SRCS = 5
-MAX_WORKERS_DOWNLOAD_IMAGES = 15
+MAX_WORKERS_EXTRACT_SRCS = 15
+MAX_WORKERS_DOWNLOAD_IMAGES = 20
 
 class PixivScraper():
 
@@ -110,6 +110,7 @@ class PixivScraper():
             for url in body:
                 image_src = url.get("urls",{}).get("original","regular")  # Use "original" or other sizes if needed
                 images_srcs.append((image_src, post_id))
+                print(f"for post {post_id} :src {image_src}")
         except Exception as e:
             print(f"Error processing post {post_id}: {str(e)}")
         # Return a list of tuples with image URLs and the post_id
@@ -118,8 +119,8 @@ class PixivScraper():
     def _make_session(self):
         session = requests.Session()
         adapter = requests.adapters.HTTPAdapter(
-            pool_connections=20,
-            pool_maxsize=20,
+            pool_connections=30,
+            pool_maxsize=60,
             max_retries=3
         )
         session.mount('http://', adapter)
@@ -231,16 +232,21 @@ def count_images_os(folder_path):
     return count
 
 if __name__ == "__main__":
-    tag = "vergil"
+    tag = "星見雅"
     page_idx = 1
-    max_images_posts = 5
+    max_images_posts = 100
+    
     stopped_at_download_idx = 0
-    # Ensure the base folder exists
     os.makedirs('scraped_datasets', exist_ok=True)
-    # Create the Pixiv folder path
     pixiv_folder = os.path.join('scraped_datasets', 'pixiv_images')
-    output_folder = os.path.join(pixiv_folder,tag)
-    file_name = tag+"_img"
+    if tag == "星見雅":
+        tag = urllib.parse.quote(tag)
+        file_name = urllib.parse.unquote(tag)+"_img"
+        data_folder = "hoshimi"
+    else:
+        file_name = tag+"_img"
+        data_folder = tag
+    output_folder = os.path.join(pixiv_folder,data_folder)
     
     begin_time = time.time()
     scraper = PixivScraper(
