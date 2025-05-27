@@ -7,7 +7,7 @@ from selenium.webdriver.support import expected_conditions as EC
 PIXIV_EMAIL = os.getenv("PIXIV_EMAIL")
 PIXIV_PASSWORD = os.getenv("PIXIV_PASSWORD")
 
-class pixiv_cookies:
+class PixivCookies:
     def __init__(self):
         pass
         
@@ -63,13 +63,13 @@ class pixiv_cookies:
         try:
             wait = WebDriverWait(driver,10)
             email_input = wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text'][style='padding-right: 8px;']"))
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text'][placeholder='E-mail address or pixiv ID']"))
             )
             password_input = wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password'][style='padding-right: 36px;']"))
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password'][placeholder='Password']"))
             )
             login_button = wait.until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit'][height='40']"))
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))
             )
             email_input.send_keys(PIXIV_EMAIL)
             password_input.send_keys(PIXIV_PASSWORD)

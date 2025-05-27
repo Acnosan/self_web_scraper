@@ -1,4 +1,4 @@
-# Images Scraper specific for websites "Pixiv , Danbooru , Pinterest"
+# Images Scraper specific for websites "Pixiv, Zerochan, Danbooru, Pinterest"
 
 ## a web scraper made using python to facilitate the extraction and downloading of images from 3 websites currently "included in the title"
 I made this project for personal use as a data science student so that I could use it in my data collection process.

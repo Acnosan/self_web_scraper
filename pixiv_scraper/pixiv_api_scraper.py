@@ -2,21 +2,24 @@ import os
 import time
 import requests
 import urllib
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
+from selenium.webdriver import firefox,chrome,Firefox,Chrome
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
 from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.firefox import GeckoDriverManager
 
 import concurrent.futures as THREAD
 from datetime import datetime
-from lib_cookies import pixiv_cookies
+from lib_cookies import PixivCookies
 
 MAX_WORKERS_EXTRACT_SRCS = 15
 MAX_WORKERS_DOWNLOAD_IMAGES = 20
 
 class PixivScraper():
 
-    def __init__(self,tag,max_images_posts,page_idx,output_folder,file_name,stopped_at_download_idx):
+    def __init__(self,tag,max_images_posts,page_idx,output_folder,file_name,pixiv_cookies_manager):
         self.base_url = "https://www.pixiv.net/en"
         self.login_path = "https://accounts.pixiv.net/login"
         self.tag = tag
@@ -24,37 +27,27 @@ class PixivScraper():
         self.page_idx = page_idx
         self.output_folder = output_folder
         self.file_name = file_name
-        self.stopped_at_download_idx = stopped_at_download_idx
+        self.pixiv_cookies_manager = pixiv_cookies_manager
         self.driver = None
         self.session = None
 
     def init_driver_service_options(self):
-        options = Options()
-        # Performance optimizations
-        options.add_argument('--headless')
-        options.add_argument('--no-sandbox')  # Bypass OS security model, required in some environments
+        options = firefox.options.Options()
+        
+        #options.add_argument('--headless')
+        #options.add_argument('--no-sandbox')  # Bypass OS security model, required in some environments
         options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
         #options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
         options.add_argument('--disable-infobars')  # Disable infobars
         options.add_argument('--disable-notifications')  # Disable notifications
         # Memory optimizations
-        options.add_argument('--disable-logging')  # Disable logging
         options.add_argument('--disable-extensions')  # Disable extensions
         options.add_argument('--disable-popup-blocking')  # Disable popup blocking
-        options.add_argument('--disable-http-cache')
         options.add_argument('--dns-prefetch-disable')
-        # Anti-detection measures
-        #options.add_argument('--disable-blink-features=AutomationControlled')
-        #options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        #options.add_experimental_option('useAutomationExtension', False)
-        options.add_argument('--log-level=3')  # This suppresses the DevTools message
-        prefs = {
-            "profile.managed_default_content_settings.images": 2,  # 2 = Block images
-        }
-        options.add_experimental_option("prefs", prefs)
-        options.add_experimental_option('excludeSwitches', ['enable-logging'])  # This suppresses console logging
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service,options=options)
+        options.add_argument("--window-size=1280,720")
+        
+        service = firefox.service.Service(GeckoDriverManager().install())
+        driver = Firefox(service=service,options=options)
         return driver
 
     def extract_posts(self):
@@ -126,7 +119,7 @@ class PixivScraper():
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         try:
-            for cookie in pixiv_cookies_manager._wait_load_cookies():
+            for cookie in self.pixiv_cookies_manager._wait_load_cookies():
                 session.cookies.set(cookie['name'], cookie['value'])
         except Exception as e:
             print(f"Exception During Session Configuration .. {e}")
@@ -134,9 +127,8 @@ class PixivScraper():
     
     def download_image(self,session,idx,image_src,post_id):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        image_name = f"{self.file_name}_idx_{idx + 1:04d}_{timestamp}.jpg"
+        image_name = f"{self.file_name}_{idx + 1:04d}_{timestamp}.jpg"
         image_path = os.path.join(self.output_folder, image_name)
-        #print(f"Attempting to download image {image_src} as {image_name}")
         try:
             headers = {
                 "Referer": f"{self.base_url}/artworks/{post_id}",
@@ -188,21 +180,22 @@ class PixivScraper():
             executor.map(
                 lambda args: self.download_image(self.session, *args),
                 zip(
-                    range(self.stopped_at_download_idx, self.stopped_at_download_idx + len(images_srcs)),
+                    range(0, len(images_srcs)),
                     images_srcs,
                     posts_ids
                 )
             )
 
     def scrape(self):
-        os.makedirs(self.output_folder,exist_ok=True)
-        if not pixiv_cookies_manager._wait_load_cookies():
-            self.driver = self.init_driver_service_options()
-            is_cookies_created = pixiv_cookies_manager._wait_create_cookies(self.driver,self.base_url,self.login_path)
-            if not is_cookies_created:
-                print(f"ERROR COOKIES DRIVER CREATION, LEAVING... {e}")
-                return
         try:
+            os.makedirs(self.output_folder,exist_ok=True)
+            if not self.pixiv_cookies_manager._wait_load_cookies():
+                self.driver = self.init_driver_service_options()
+                is_cookies_created = self.pixiv_cookies_manager._wait_create_cookies(self.driver,self.base_url,self.login_path)
+                if not is_cookies_created:
+                    print(f"ERROR COOKIES DRIVER CREATION, LEAVING... {e}")
+                    return
+
             while self.max_images_posts > 0:
                 if self.max_images_posts <= 0:
                     break
@@ -217,7 +210,6 @@ class PixivScraper():
                         break
                     self.multi_threading_download_images(images_srcs,posts_ids)
                     self.max_images_posts -= len(retrieved_posts_ids)
-                    self.stopped_at_download_idx += len(images_srcs)
                 except Exception as e:
                     print(f"Failed to process post after we retrieved the posts in scrap method: {e}")
                     continue
@@ -225,40 +217,3 @@ class PixivScraper():
             print(f"Error Occured in Scrape Method : {e}")
         finally:
             print(f"Finished.. Quiting Process START")
-
-def count_images_os(folder_path):
-    image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
-    count = sum(1 for file in os.listdir(folder_path) if file.lower().endswith(image_extensions))
-    return count
-
-if __name__ == "__main__":
-    tag = "星見雅"
-    page_idx = 1
-    max_images_posts = 100
-    
-    stopped_at_download_idx = 0
-    os.makedirs('scraped_datasets', exist_ok=True)
-    pixiv_folder = os.path.join('scraped_datasets', 'pixiv_images')
-    if tag == "星見雅":
-        tag = urllib.parse.quote(tag)
-        file_name = urllib.parse.unquote(tag)+"_img"
-        data_folder = "hoshimi"
-    else:
-        file_name = tag+"_img"
-        data_folder = tag
-    output_folder = os.path.join(pixiv_folder,data_folder)
-    
-    begin_time = time.time()
-    scraper = PixivScraper(
-        tag=tag,
-        max_images_posts=max_images_posts,
-        page_idx=page_idx,
-        output_folder=output_folder,
-        file_name=file_name,
-        stopped_at_download_idx=stopped_at_download_idx,
-    )
-    pixiv_cookies_manager = pixiv_cookies()
-    
-    scraper.scrape()
-    end_time = time.time()
-    print(f"Scaper took {(end_time-begin_time):.2f} seconds with final result of {count_images_os(output_folder)} images.")
