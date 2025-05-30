@@ -1,7 +1,5 @@
 import os
-import time
 import requests
-import urllib
 from selenium.webdriver import firefox,chrome,Firefox,Chrome
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -12,7 +10,6 @@ from webdriver_manager.firefox import GeckoDriverManager
 
 import concurrent.futures as THREAD
 from datetime import datetime
-from lib_cookies import PixivCookies
 
 MAX_WORKERS_EXTRACT_SRCS = 15
 MAX_WORKERS_DOWNLOAD_IMAGES = 20
@@ -50,6 +47,26 @@ class PixivScraper():
         driver = Firefox(service=service,options=options)
         return driver
 
+    def _make_session(self):
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=30,
+            pool_maxsize=60,
+            max_retries=3
+        )
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Referer": self.base_url
+        })
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        try:
+            for cookie in self.pixiv_cookies_manager._wait_load_cookies():
+                session.cookies.set(cookie['name'], cookie['value'])
+        except Exception as e:
+            print(f"Exception During Session Configuration .. {e}")
+        return session
+    
     def extract_posts(self):
         search_url = f"{self.base_url}/tags/{self.tag}/illustrations" + (f"?p={self.page_idx}" if self.page_idx>1 else '')
 
@@ -87,14 +104,10 @@ class PixivScraper():
             return []
 
     def extract_srcs(self,post_id):
-        images_srcs = []  # Ensure it's initialized
+        images_srcs = []
         url = f"https://www.pixiv.net/ajax/illust/{post_id}/pages"
-        headers = {
-            "Referer": f"https://www.pixiv.net/en/artworks/{post_id}",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        }
         try:
-            response = requests.get(url, headers=headers)
+            response = requests.get(url)
             if response.status_code != 200:
                 print(f"{response.status_code} is the status code : not 200")
                 return []
@@ -106,25 +119,9 @@ class PixivScraper():
                 print(f"for post {post_id} :src {image_src}")
         except Exception as e:
             print(f"Error processing post {post_id}: {str(e)}")
-        # Return a list of tuples with image URLs and the post_id
+
         return images_srcs
 
-    def _make_session(self):
-        session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(
-            pool_connections=30,
-            pool_maxsize=60,
-            max_retries=3
-        )
-        session.mount('http://', adapter)
-        session.mount('https://', adapter)
-        try:
-            for cookie in self.pixiv_cookies_manager._wait_load_cookies():
-                session.cookies.set(cookie['name'], cookie['value'])
-        except Exception as e:
-            print(f"Exception During Session Configuration .. {e}")
-        return session
-    
     def download_image(self,session,idx,image_src,post_id):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         image_name = f"{self.file_name}_{idx + 1:04d}_{timestamp}.jpg"

@@ -8,6 +8,7 @@ import threading
 
 from lib_cookies import PixivCookies
 from pixiv_scraper.pixiv_api_scraper import PixivScraper
+from zerochan_scraper.zerochan_api_scraper import ZeroChanScraper
 
 def count_images_os(folder_path):
     image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
@@ -37,7 +38,21 @@ def run_scraper():
         scraper.scrape()
         end_time = time.time()
         print(f"Scaper took {(end_time-begin_time):.2f} seconds with final result of {count_images_os(output_folder)} images.")
-        
+    
+    if site_var.get() == "Zerochan":
+        begin_time = time.time()
+        scraper = ZeroChanScraper(
+            tag=tag_entry.get(),
+            max_images_posts=int(num_entry.get()),
+            page_idx=int(page_idx.get()),
+            output_folder=output_folder,
+            file_name = urllib.parse.unquote(tag_entry.get())
+        )
+        scraper.scrape()
+        end_time = time.time()
+        print(f"Scaper took {(end_time-begin_time):.2f} seconds with final result of {count_images_os(output_folder)} images.")
+    
+    
 def start_thread():
     threading.Thread(target=run_scraper, daemon=True).start()
 
@@ -52,7 +67,7 @@ root.geometry("400x500")
 # Dropdowns
 tk.Label(root, text="Choose Site").pack()
 site_var = tk.StringVar()
-ttk.Combobox(root, textvariable=site_var, values=["Pixiv", "Danbooru", "Zerochan"]).pack()
+ttk.Combobox(root, textvariable=site_var, values=["Pixiv", "Danbooru", "Zerochan", "Pinterest"]).pack()
 
 tk.Label(root, text="Browser").pack()
 browser_var = tk.StringVar()

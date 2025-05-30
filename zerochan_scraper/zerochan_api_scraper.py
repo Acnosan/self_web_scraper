@@ -15,14 +15,13 @@ MAX_WORKERS_DOWNLOAD_IMAGES = 10
 
 class ZeroChanScraper():
 
-    def __init__(self,tag,max_images_posts,page_idx,output_folder,file_name,stopped_at_download_idx):
+    def __init__(self,tag,max_images_posts,page_idx,output_folder,file_name):
         self.base_url = "https://www.zerochan.net"
         self.tag = tag
         self.max_images_posts = max_images_posts
         self.page_idx = page_idx
         self.output_folder = output_folder
         self.file_name = file_name
-        self.stopped_at_download_idx = stopped_at_download_idx
         self.session = None
         self.progress_bar = None
         self.lock = Lock()
@@ -40,7 +39,7 @@ class ZeroChanScraper():
         )
         session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "Referer": "https://www.zerochan.net"
+            "Referer":  self.base_url
         })
         session.mount('http://', adapter)
         session.mount('https://', adapter)
@@ -55,7 +54,7 @@ class ZeroChanScraper():
             if response.status_code != 200:
                 print(f"{response.status_code} is the status code : not 200")
                 return []
-            #print(f"\nLoading on page {self.page_idx}\n")
+
             soup = BeautifulSoup(response.text, 'html.parser')
             posts_section = soup.find('ul', class_='medium-thumbs')
             if not posts_section:
@@ -68,16 +67,15 @@ class ZeroChanScraper():
                     all_ids.add(extracted_id)
             if self.max_images_posts >= len(all_ids):
                 self.page_idx +=1
-            retrieved_posts_ids = list(all_ids)[:max_images_posts]
+            retrieved_posts_ids = list(all_ids)[:self.max_images_posts]
             
-            #print(f"Found {len(all_ids)} posts on page, retrieved {len(retrieved_posts_ids)}, (limited by max_images_posts which left {self.max_images_posts} )")
             return retrieved_posts_ids
         except Exception as e:
             print(f"Error occurred in extract_posts: {e}")
             return []
 
     def extract_srcs(self,post_id):
-        images_srcs = []  # Ensure it's initialized
+        images_srcs = [] 
         search_url = f"https://www.zerochan.net/{post_id}"
         try:
             response = self.session.get(search_url)
@@ -87,21 +85,23 @@ class ZeroChanScraper():
             soup = BeautifulSoup(response.text, 'html.parser')
             script_tag = soup.find("script", type="application/ld+json")
             image_src = json.loads(script_tag.string).get("contentUrl")
-            print(f"{post_id} : {image_src}")
-            images_srcs.append(image_src)
-            #print(f"for post {post_id} :src {image_src}")
+            #print(f"{post_id} : {image_src}")
+            images_srcs.append((image_src, post_id))
         except Exception as e:
             print(f"Error processing post {post_id}: {str(e)}")
-        # Return a list of tuples with image URLs and the post_id
+
         return images_srcs
 
-    def download_image(self,session,idx,image_src):
+    def download_image(self,session,idx,image_src,post_id):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        image_name = f"{self.file_name}_idx_{idx + 1:04d}_{timestamp}.jpg"
+        image_name = f"{self.file_name}_{idx + 1:04d}_{timestamp}.jpg"
         image_path = os.path.join(self.output_folder, image_name)
-        #print(f"Attempting to download image {image_src} as {image_name}")
         try:
-            response = session.get(image_src)
+            headers = {
+                "Referer": f"{self.base_url}/{post_id}",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            }
+            response = session.get(image_src,headers=headers)
             if response.status_code != 200:
                 print(f"Failed to fetch image {image_src}")
                 return
@@ -118,29 +118,37 @@ class ZeroChanScraper():
             print(f"Error downloading image {image_name}:{e}")
 
     def multi_threading_extract_srcs(self, posts_ids):
-        #print("Multi Threading Of SRCs Extraction BEGIN....")
-        combined_images_srcs = []
+        print("Multi Threading Of SRCs Extraction BEGIN....")
+        combined_images_srcs = set()
+        combined_posts_ids = []
+        
         with THREAD.ThreadPoolExecutor(max_workers=MAX_WORKERS_EXTRACT_SRCS) as EXE:
             try:
-                # Execute extract_srcs for each post_id and collect results
+                all_results = []
                 results = EXE.map(self.extract_srcs, posts_ids)
-                for image_src in results:
-                    combined_images_srcs.append(image_src)
+                
+                for result in results:
+                    all_results.extend(result)
+                
+                for img_src, post_id in all_results:
+                    combined_images_srcs.add(img_src)
+                    combined_posts_ids.append(post_id)
             except Exception as e:
                 print(f"Exception Occurred During Multi Threading Extract Srcs: {e}")
-                return []
-        
-        #print(f"All Srcs Located With Total {len(combined_images_srcs)}")
-        return combined_images_srcs
+                return set(), []                
 
-    def multi_threading_download_images(self,images_srcs):
-        #print("Multi Threading Of Downloading Images BEGIN....")
+        print(f"All Srcs Located With Total {len(combined_images_srcs)} : Combined Posts Urls : {len(combined_posts_ids)}")
+        return combined_images_srcs, combined_posts_ids
+
+    def multi_threading_download_images(self,images_srcs,posts_ids):
+        print("Multi Threading Of Downloading Images BEGIN....")
         with THREAD.ThreadPoolExecutor(max_workers=MAX_WORKERS_DOWNLOAD_IMAGES) as executor:
             executor.map(
                 lambda args: self.download_image(self.session, *args),
                 zip(
-                    range(self.stopped_at_download_idx, self.stopped_at_download_idx + len(images_srcs)),
+                    range(0, len(images_srcs)),
                     images_srcs,
+                    posts_ids
                 )
             )
 
@@ -164,45 +172,14 @@ class ZeroChanScraper():
                     print("extract_posts returned nothing...")
                     break
                 try:
-                    images_srcs = self.multi_threading_extract_srcs(retrieved_posts_ids)
+                    images_srcs,posts_ids= self.multi_threading_extract_srcs(retrieved_posts_ids)
                     if not images_srcs:
                         print("multithreading extract srcs returned nothing...")
                         break
-                    self.multi_threading_download_images(images_srcs)
+                    self.multi_threading_download_images(images_srcs,posts_ids)
                     self.max_images_posts -= len(retrieved_posts_ids)
-                    self.stopped_at_download_idx += len(images_srcs)
                 except Exception as e:
                     print(f"Failed to process post after we retrieved the posts in scrap method: {e}")
                     continue
         except Exception as e:
             print(f"Error Occured in Scrape Method : {e}")
-
-def count_images_os(folder_path):
-    image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
-    count = sum(1 for file in os.listdir(folder_path) if file.lower().endswith(image_extensions))
-    return count
-
-if __name__ == "__main__":
-    tag = "Hoshimi Miyabi"
-    page_idx = 1
-    max_images_posts = 5
-    stopped_at_download_idx = 0
-    
-    os.makedirs('../scraped_datasets', exist_ok=True)
-    zerochan_folder = os.path.join('../scraped_datasets', 'zerochan_images')
-    file_name = tag.replace(' ','_')+"_img"
-    output_folder = os.path.join(zerochan_folder,file_name)
-    
-    begin_time = time.time()
-    scraper = ZeroChanScraper(
-        tag=tag,
-        max_images_posts=max_images_posts,
-        page_idx=page_idx,
-        output_folder=output_folder,
-        file_name=file_name,
-        stopped_at_download_idx=stopped_at_download_idx,
-    )
-    
-    scraper.scrape()
-    end_time = time.time()
-    print(f" Finished.. Scaper took {(end_time-begin_time):.2f} seconds with final result of {count_images_os(output_folder)} images.")
