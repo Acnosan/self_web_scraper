@@ -15,7 +15,7 @@ MAX_WORKERS_DOWNLOAD_IMAGES = 10
 
 class ZeroChanScraper():
 
-    def __init__(self,tag,max_images_posts,page_idx,output_folder,file_name):
+    def __init__(self,tag: str,max_images_posts: int,page_idx: int,output_folder: str,file_name: str):
         self.base_url = "https://www.zerochan.net"
         self.tag = tag
         self.max_images_posts = max_images_posts
@@ -74,7 +74,7 @@ class ZeroChanScraper():
             print(f"Error occurred in extract_posts: {e}")
             return []
 
-    def extract_srcs(self,post_id):
+    def extract_srcs(self,post_id: int):
         images_srcs = [] 
         search_url = f"https://www.zerochan.net/{post_id}"
         try:
@@ -92,7 +92,7 @@ class ZeroChanScraper():
 
         return images_srcs
 
-    def download_image(self,session,idx,image_src,post_id):
+    def download_image(self,session: requests.Session,idx: int,image_src: str,post_id: int):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         image_name = f"{self.file_name}_{idx + 1:04d}_{timestamp}.jpg"
         image_path = os.path.join(self.output_folder, image_name)
@@ -117,7 +117,7 @@ class ZeroChanScraper():
         except Exception as e:
             print(f"Error downloading image {image_name}:{e}")
 
-    def multi_threading_extract_srcs(self, posts_ids):
+    def multi_threading_extract_srcs(self, posts_ids: list[int]):
         print("Multi Threading Of SRCs Extraction BEGIN....")
         combined_images_srcs = set()
         combined_posts_ids = []
@@ -140,7 +140,7 @@ class ZeroChanScraper():
         print(f"All Srcs Located With Total {len(combined_images_srcs)} : Combined Posts Urls : {len(combined_posts_ids)}")
         return combined_images_srcs, combined_posts_ids
 
-    def multi_threading_download_images(self,images_srcs,posts_ids):
+    def multi_threading_download_images(self,images_srcs: list[str],posts_ids: list[int]):
         print("Multi Threading Of Downloading Images BEGIN....")
         with THREAD.ThreadPoolExecutor(max_workers=MAX_WORKERS_DOWNLOAD_IMAGES) as executor:
             executor.map(
@@ -153,8 +153,8 @@ class ZeroChanScraper():
             )
 
     def scrape(self):
-        os.makedirs(self.output_folder,exist_ok=True)
         try:
+            os.makedirs(self.output_folder,exist_ok=True)
             self.progress_bar = tqdm(
                 total=self.max_images_posts,
                 desc="Scraping Images",
@@ -183,3 +183,5 @@ class ZeroChanScraper():
                     continue
         except Exception as e:
             print(f"Error Occured in Scrape Method : {e}")
+        finally:
+            print(f"Finished.. Quiting Process START")

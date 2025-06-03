@@ -1,22 +1,21 @@
 import os
 import requests
 from selenium.webdriver import firefox,chrome,Firefox,Chrome
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-
 from webdriver_manager.chrome import ChromeDriverManager
 from webdriver_manager.firefox import GeckoDriverManager
-
+from lib_cookies import PixivCookies
 import concurrent.futures as THREAD
 from datetime import datetime
+from tqdm import tqdm
+from threading import Lock
+import time
 
-MAX_WORKERS_EXTRACT_SRCS = 15
-MAX_WORKERS_DOWNLOAD_IMAGES = 20
+MAX_WORKERS_EXTRACT_SRCS = 10
+MAX_WORKERS_DOWNLOAD_IMAGES = 10
 
 class PixivScraper():
 
-    def __init__(self,tag,max_images_posts,page_idx,output_folder,file_name,pixiv_cookies_manager):
+    def __init__(self,tag: str,max_images_posts: int,page_idx: int,output_folder: str,file_name: str, browser: str,pixiv_cookies_manager: PixivCookies):
         self.base_url = "https://www.pixiv.net/en"
         self.login_path = "https://accounts.pixiv.net/login"
         self.tag = tag
@@ -24,13 +23,16 @@ class PixivScraper():
         self.page_idx = page_idx
         self.output_folder = output_folder
         self.file_name = file_name
+        self.browser = browser
         self.pixiv_cookies_manager = pixiv_cookies_manager
         self.driver = None
         self.session = None
+        self.progress_bar = None
+        self.lock = Lock()
 
     def init_driver_service_options(self):
-        options = firefox.options.Options()
         
+        options = self.browser.options.Options()
         #options.add_argument('--headless')
         #options.add_argument('--no-sandbox')  # Bypass OS security model, required in some environments
         options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
@@ -42,9 +44,12 @@ class PixivScraper():
         options.add_argument('--disable-popup-blocking')  # Disable popup blocking
         options.add_argument('--dns-prefetch-disable')
         options.add_argument("--window-size=1280,720")
-        
-        service = firefox.service.Service(GeckoDriverManager().install())
-        driver = Firefox(service=service,options=options)
+        if self.browser == 'firefox':
+            service = firefox.service.Service(GeckoDriverManager().install())
+            driver = Firefox(service=service,options=options)
+        else:
+            service = chrome.service.Service(ChromeDriverManager().install())
+            driver = Chrome(service=service,options=options)
         return driver
 
     def _make_session(self):
@@ -103,7 +108,7 @@ class PixivScraper():
             print(f"Error occurred in extract_posts: {e}")
             return []
 
-    def extract_srcs(self,post_id):
+    def extract_srcs(self,post_id: int):
         images_srcs = []
         url = f"https://www.pixiv.net/ajax/illust/{post_id}/pages"
         try:
@@ -122,7 +127,7 @@ class PixivScraper():
 
         return images_srcs
 
-    def download_image(self,session,idx,image_src,post_id):
+    def download_image(self,session: requests.Session ,idx: int,image_src: str,post_id: int):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         image_name = f"{self.file_name}_{idx + 1:04d}_{timestamp}.jpg"
         image_path = os.path.join(self.output_folder, image_name)
@@ -139,12 +144,15 @@ class PixivScraper():
             try:
                 with open(image_path, 'wb') as image:
                     image.write(response.content)
+                with self.lock:
+                    self.progress_bar.update(1)
+                    time.sleep(0.0005)
             except Exception as e:
                 print(f"Image {image_src} Is Not Downloaded")
         except Exception as e:
             print(f"Error downloading image {image_name}:{e}")
 
-    def multi_threading_extract_srcs(self, posts_ids):
+    def multi_threading_extract_srcs(self, posts_ids: list[int]):
         print("Multi Threading Of SRCs Extraction BEGIN....")
         combined_images_srcs = set()
         combined_posts_ids = []
@@ -170,7 +178,7 @@ class PixivScraper():
         print(f"All Srcs Located With Total {len(combined_images_srcs)} : Combined Posts Urls : {len(combined_posts_ids)}")
         return combined_images_srcs, combined_posts_ids
 
-    def multi_threading_download_images(self,images_srcs,posts_ids):
+    def multi_threading_download_images(self,images_srcs: list[str],posts_ids: list[int]):
         print("Multi Threading Of Downloading Images BEGIN....")
         self.session = self._make_session()
         with THREAD.ThreadPoolExecutor(max_workers=MAX_WORKERS_DOWNLOAD_IMAGES) as executor:
@@ -192,7 +200,14 @@ class PixivScraper():
                 if not is_cookies_created:
                     print(f"ERROR COOKIES DRIVER CREATION, LEAVING... {e}")
                     return
-
+            self.progress_bar = tqdm(
+                total=self.max_images_posts,
+                desc="Scraping Images",
+                unit="Image",
+                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+                colour='red',
+                leave=True
+            )
             while self.max_images_posts > 0:
                 if self.max_images_posts <= 0:
                     break

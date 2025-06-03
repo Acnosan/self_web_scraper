@@ -5,10 +5,12 @@ import time
 import os
 import urllib
 import threading
-
+import json
 from lib_cookies import PixivCookies
 from pixiv_scraper.pixiv_api_scraper import PixivScraper
 from zerochan_scraper.zerochan_api_scraper import ZeroChanScraper
+
+HISTORY = 'user_histroy.json'
 
 def count_images_os(folder_path):
     image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
@@ -33,6 +35,7 @@ def run_scraper():
             page_idx=int(page_idx.get()),
             output_folder=output_folder,
             file_name = urllib.parse.unquote(tag_entry.get()),
+            browser = str.lower(browser_var.get()),
             pixiv_cookies_manager = PixivCookies()
         )
         scraper.scrape()
@@ -59,40 +62,88 @@ def start_thread():
 def browse_dir():
     folder_selected = filedialog.askdirectory()
     output_dir.set(folder_selected)
-# 
-root = tk.Tk()
-root.title("Scraper UI")
-root.geometry("400x500")
 
-# Dropdowns
-tk.Label(root, text="Choose Site").pack()
-site_var = tk.StringVar()
-ttk.Combobox(root, textvariable=site_var, values=["Pixiv", "Danbooru", "Zerochan", "Pinterest"]).pack()
+def update_browser_visibility(*args):
+    if site_var.get() == "Zerochan":
+        browser_label.pack_forget()
+        browser_combobox.pack_forget()
+    else:
+        browser_label.pack()
+        browser_combobox.pack()
 
-tk.Label(root, text="Browser").pack()
-browser_var = tk.StringVar()
-ttk.Combobox(root, textvariable=browser_var, values=["Chrome", "Firefox"]).pack()
+def save_history():
+    data = {
+        'website': site_var.get(),
+        'browser': str.lower(browser_var.get()),
+        'tag' : tag_entry.get(),
+        'max_images_posts': int(num_entry.get()),
+        'page_idx': int(page_idx.get()),
+    }
+    with open(HISTORY,'w') as f:
+        json.dump(data,f)
 
-# Inputs
-tk.Label(root, text="Tag").pack()
-tag_entry = tk.Entry(root)
-tag_entry.pack()
+def load_history():
+    if os.path.exists(HISTORY):
+        with open(HISTORY,'r') as f:
+            data=json.load(f)
+            site_var.set(data.get('website'))
+            browser_var.set(data.get('browser'))
+            tag_entry.delete(0, tk.END)  # clear existing content
+            tag_entry.insert(0, data.get('tag', ''))  # insert new content
 
-tk.Label(root, text="Number of Images").pack()
-num_entry = tk.Entry(root)
-num_entry.pack()
+            num_entry.delete(0, tk.END)  # clear existing content
+            num_entry.insert(0, data.get('max_images_posts', ''))  # insert new content
 
-tk.Label(root, text="Starting Page Index").pack()
-page_idx = tk.Entry(root)
-page_idx.pack()
+            page_idx.delete(0, tk.END)  # clear existing content
+            page_idx.insert(0, data.get('page_idx', ''))  # insert new content
 
-# Output directory
-tk.Label(root, text="Output Directory").pack()
-output_dir = tk.StringVar()
-tk.Entry(root, textvariable=output_dir).pack()
-tk.Button(root, text="Browse", command=browse_dir).pack()
+if __name__ == '__main__':
+    root = tk.Tk()
+    root.title("Scraper UI")
+    root.geometry("400x500")
 
-# Start button
-tk.Button(root, text="Start Scraping", command=start_thread).pack(pady=10)
+    # Dropdowns
+    tk.Label(root, text="Choose Site").pack()
+    site_var = tk.StringVar()
+    ttk.Combobox(root, textvariable=site_var, values=["Pixiv", "Danbooru", "Zerochan", "Pinterest"]).pack()
 
-root.mainloop()
+    browser_label = tk.Label(root, text="Browser")
+    browser_label.pack()
+    browser_var = tk.StringVar()
+    browser_combobox = ttk.Combobox(root, textvariable=browser_var, values=["Chrome", "Firefox"])
+    browser_combobox.pack()
+
+    # INPUT < TAG >
+    tk.Label(root, text="Tag").pack()
+    tag_entry = tk.Entry(root)
+    tag_entry.pack()
+
+    # INPUT < Number of posts >
+    tk.Label(root, text="Number of Posts").pack()
+    num_entry = tk.Entry(root)
+    num_entry.pack()
+
+    # INPUT < Starting page index >
+
+    tk.Label(root, text="Starting Page Index").pack()
+    page_idx = tk.Entry(root)
+    page_idx.pack()
+
+    # INPUT < Output Dir >
+    tk.Label(root, text="Output Directory").pack()
+    output_dir = tk.StringVar()
+    tk.Entry(root, textvariable=output_dir).pack()
+    tk.Button(root, text="Browse", command=browse_dir).pack()
+
+    # Start Button
+    tk.Button(root, text="Start Scraping", command=start_thread).pack(pady=10)
+    
+    load_history()
+    
+    # Traceback the state of our target website
+    site_var.trace_add("write", update_browser_visibility)
+
+    update_browser_visibility()
+    # Save inputs on close
+    root.protocol("WM_DELETE_WINDOW", lambda: (save_history(), root.destroy()))
+    root.mainloop()
